@@ -32,6 +32,9 @@ const logger = createLogger({ name: 'meross-local' });
  */
 const DEFAULT_TIMEOUT_MS = 4000;
 
+/** Where the unadvertised HTTP endpoint listens. */
+export const DEFAULT_PORT = 80;
+
 /**
  * Send one message directly to a device on the LAN.
  *
@@ -52,10 +55,13 @@ export async function localRequest({
   method,
   payload = {},
   timeoutMs = DEFAULT_TIMEOUT_MS,
+  port = DEFAULT_PORT,
 }) {
   if (!ip) {
     throw new Error('No LAN address known for this device');
   }
+
+  const address = port === DEFAULT_PORT ? ip : `${ip}:${port}`;
 
   // The Meross app sends `from` and `uuid` on local requests; mirroring it
   // keeps us on the exact shape the firmware is known to accept.
@@ -64,15 +70,15 @@ export async function localRequest({
     method,
     payload,
     key,
-    from: `http://${ip}/config`,
+    from: `http://${address}/config`,
     uuid,
   });
 
-  logger.debug(`LAN ${method} ${namespace} -> ${ip}`);
+  logger.debug(`LAN ${method} ${namespace} -> ${address}`);
 
   let response;
   try {
-    response = await fetch(`http://${ip}/config`, {
+    response = await fetch(`http://${address}/config`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(message),
@@ -84,11 +90,11 @@ export async function localRequest({
     // ENETUNREACH mean there is no route to the device's network, ECONNREFUSED
     // means the host is there but nothing listens, and a timeout means packets
     // are being dropped. Surface it.
-    throw new Error(`${describeNetworkError(err)} (${ip})`, { cause: err });
+    throw new Error(`${describeNetworkError(err)} (${address})`, { cause: err });
   }
 
   if (!response.ok) {
-    throw new Error(`Meross LAN HTTP ${response.status} from ${ip}`);
+    throw new Error(`Meross LAN HTTP ${response.status} from ${address}`);
   }
 
   const body = await response.json();
@@ -97,7 +103,7 @@ export async function localRequest({
   // than an HTTP status — most often a signature it does not accept.
   if (isErrorNamespace(body?.header?.namespace)) {
     throw new Error(
-      `Meross device ${ip} refused the message (${body.header.namespace}): ` +
+      `Meross device ${address} refused the message (${body.header.namespace}): ` +
         JSON.stringify(body.payload),
     );
   }
@@ -105,7 +111,9 @@ export async function localRequest({
   // A refusal can also hide in the body while the envelope looks perfect.
   const payloadError = readPayloadError(body?.payload);
   if (payloadError) {
-    throw new Error(`Meross device ${ip} returned error ${payloadError.code} for ${namespace}`);
+    throw new Error(
+      `Meross device ${address} returned error ${payloadError.code} for ${namespace}`,
+    );
   }
 
   return body?.payload ?? {};
@@ -171,7 +179,12 @@ export function describeNetworkError(err) {
  *
  * @returns {Promise<boolean>}
  */
-export async function isReachable({ ip, key, timeoutMs = DEFAULT_TIMEOUT_MS }) {
+export async function isReachable({
+  ip,
+  key,
+  timeoutMs = DEFAULT_TIMEOUT_MS,
+  port = DEFAULT_PORT,
+}) {
   try {
     await localRequest({
       ip,
@@ -179,6 +192,7 @@ export async function isReachable({ ip, key, timeoutMs = DEFAULT_TIMEOUT_MS }) {
       namespace: 'Appliance.System.All',
       method: 'GET',
       timeoutMs,
+      port,
     });
     return true;
   } catch (err) {

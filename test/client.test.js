@@ -234,3 +234,56 @@ test('an unparseable feature id is reported rather than guessed', () => {
   assert.equal(parseFeatureExternalId('ext:sel:meross:uuid:on-off-abc'), null);
   assert.equal(parseFeatureExternalId(undefined), null);
 });
+
+// --- Probing the local endpoint ----------------------------------------------
+
+test('the local probe reports each port separately, signed', async () => {
+  // A raw curl proves nothing: a Meross device accepts the connection and then
+  // ignores anything unsigned, so an unsigned probe hangs exactly like a dead
+  // endpoint. Only a real signed read separates "not listening" from
+  // "listening and refusing us".
+  const client = new MerossClient();
+  client.session = { key: 'k', token: 't', userId: '1', mqttDomain: 'x' };
+  const device = { uuid: 'hub', name: 'Smart Hub', ip: '192.168.50.24', ability: {} };
+
+  const seen = [];
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = async (url, options) => {
+    seen.push({ url, body: JSON.parse(options.body) });
+    if (url.includes(':5010')) {
+      throw Object.assign(new TypeError('fetch failed'), { cause: { code: 'ECONNREFUSED' } });
+    }
+    return {
+      ok: true,
+      json: async () => ({ header: {}, payload: { all: { system: {} } } }),
+    };
+  };
+
+  try {
+    const results = await client.probeLocalPorts(device);
+
+    assert.deepEqual(
+      results.map((r) => `${r.port}:${r.ok}`),
+      ['80:true', '5010:false'],
+    );
+    assert.match(results[1].error, /nothing is listening/);
+    // Port 80 keeps the bare address; anything else is spelled out.
+    assert.deepEqual(
+      seen.map((s) => s.url),
+      ['http://192.168.50.24/config', 'http://192.168.50.24:5010/config'],
+    );
+    // And every probe is signed, which is the entire point.
+    for (const { body } of seen) {
+      assert.match(body.header.sign, /^[0-9a-f]{32}$/);
+      assert.equal(body.header.namespace, 'Appliance.System.All');
+      assert.equal(body.header.method, 'GET');
+    }
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
+test('a device with no known address is not probed at all', async () => {
+  const client = new MerossClient();
+  assert.deepEqual(await client.probeLocalPorts({ uuid: 'x', name: 'n', ip: null }), []);
+});

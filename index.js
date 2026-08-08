@@ -145,6 +145,16 @@ gladys.onAction('diagnose', async () => {
         );
       }
 
+      // Which port, if any, serves the local endpoint. Only a correctly signed
+      // request can tell: an unsigned one is ignored by a device that is
+      // perfectly alive, so it looks identical to a dead endpoint.
+      for (const local of await client.probeLocalPorts(device)) {
+        parts.push(
+          `\n  ! LAN port ${local.port}: ` +
+            (local.ok ? `answered (${local.answered.join(', ') || 'empty'})` : local.error),
+        );
+      }
+
       // Read (never write) the namespaces we cannot model yet: their content is
       // what a future version needs in order to support the device properly.
       for (const probe of await client.probeNamespaces(device)) {

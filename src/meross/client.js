@@ -76,6 +76,13 @@ export const PROBE_NAMESPACES = [
 const PROBE_TIMEOUT_MS = 6000;
 
 /**
+ * Ports worth trying for the local endpoint. 80 is the documented one; 5010 is
+ * the second port an MSH400 was found listening on, and its purpose is unknown
+ * — which is reason enough to ask it the same question.
+ */
+export const LOCAL_PORTS = [80, 5010];
+
+/**
  * Request shapes to try when reading an undocumented namespace, most likely
  * first: a bare read, then the namespace's own key as an object, then as an
  * array (hub-style namespaces answer lists).
@@ -694,6 +701,39 @@ export class MerossClient {
         }
 
         return { namespace, successes, attempts };
+      }),
+    );
+  }
+
+  /**
+   * Send a properly signed read to each port a device might serve, and report
+   * what each one did.
+   *
+   * A raw `curl` proves nothing here: a Meross device accepts the TCP
+   * connection and then ignores anything that is not correctly signed, so an
+   * unsigned probe hangs exactly like a dead endpoint would. Only a real,
+   * signed request separates "not listening" from "listening and refusing us".
+   */
+  async probeLocalPorts(device, ports = LOCAL_PORTS) {
+    if (!device.ip) {
+      return [];
+    }
+
+    return Promise.all(
+      ports.map(async (port) => {
+        try {
+          const payload = await localRequest({
+            ip: device.ip,
+            key: this.session?.key,
+            uuid: device.uuid,
+            namespace: NAMESPACE.SYSTEM_ALL,
+            method: METHOD.GET,
+            port,
+          });
+          return { port, ok: true, answered: Object.keys(payload ?? {}) };
+        } catch (err) {
+          return { port, ok: false, error: err.message };
+        }
       }),
     );
   }
