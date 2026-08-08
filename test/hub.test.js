@@ -327,21 +327,17 @@ function wateringHub() {
   return device;
 }
 
-test('a watering goes over the LAN, never the cloud', async () => {
-  // The hub advertises Appliance.Control.Water but never answers it over MQTT:
-  // the request just times out. Only a direct POST to the hub works, which is
-  // what the Meross app does. Routing it through the normal channel would
-  // silently fall back to the cloud and hang.
+test('a watering goes through the normal channel, cloud included', async () => {
+  // This namespace looked LAN-only while the payload was wrong: keyed anything
+  // but `control`, the hub answers with silence, which reads exactly like a
+  // transport that does not carry it. With the right shape the cloud answers,
+  // so pinning the command to the LAN would only break hubs Gladys cannot
+  // reach directly.
   const device = wateringHub();
   const client = createCountingClient();
-  const cloud = [];
-  const lan = [];
+  const sent = [];
   client.request = async (uuid, namespace) => {
-    cloud.push(namespace);
-    return {};
-  };
-  client.requestLocal = async (uuid, namespace) => {
-    lan.push(namespace);
+    sent.push(namespace);
     return {};
   };
 
@@ -354,15 +350,14 @@ test('a watering goes over the LAN, never the cloud', async () => {
     value: 1,
   });
 
-  assert.deepEqual(lan, ['Appliance.Control.Water']);
-  assert.deepEqual(cloud, [], 'nothing may go through the cloud');
+  assert.deepEqual(sent, ['Appliance.Control.Water']);
 });
 
 test('starting a watering sends the payload the app sends', async () => {
   const device = wateringHub();
   const client = createCountingClient();
   const sent = [];
-  client.requestLocal = async (uuid, namespace, method, payload) => {
+  client.request = async (uuid, namespace, method, payload) => {
     sent.push({ uuid, namespace, method, payload });
     return {};
   };
@@ -392,7 +387,7 @@ test('stopping a watering uses onoff 2 and omits the duration', async () => {
   const device = wateringHub();
   const client = createCountingClient();
   const sent = [];
-  client.requestLocal = async (uuid, namespace, method, payload) => {
+  client.request = async (uuid, namespace, method, payload) => {
     sent.push(payload);
     return {};
   };
@@ -417,7 +412,7 @@ test('a per-timer duration overrides the integration default', async () => {
   const device = wateringHub();
   const client = createCountingClient();
   const sent = [];
-  client.requestLocal = async (uuid, namespace, method, payload) => {
+  client.request = async (uuid, namespace, method, payload) => {
     sent.push(payload);
     return {};
   };
@@ -449,7 +444,7 @@ test('a per-timer duration overrides the integration default', async () => {
 test('an out-of-range duration is clamped rather than sent as-is', async () => {
   const device = wateringHub();
   const client = createCountingClient();
-  client.requestLocal = async () => ({});
+  client.request = async () => ({});
 
   assert.equal(
     await hub.onSetValue(client, {
@@ -485,9 +480,9 @@ test('a hub that cannot water refuses the command instead of sending it', async 
 });
 
 test('a watering push is recorded against the sub-device it names', async () => {
-  // `Appliance.Control.Water` is a PUSH namespace and targets `subId`, not the
-  // `id` every Appliance.Hub.* namespace uses. Routing it like a hub payload
-  // would drop it, and merging it into the digest would corrupt that.
+  // `Appliance.Control.Water` targets `subId`, not the `id` every
+  // Appliance.Hub.* namespace uses. Routing it like a hub payload would drop
+  // it, and merging it into the digest would corrupt that.
   const device = wateringHub();
 
   mergeSubIdPayload(device, NAMESPACE.CONTROL_WATER, {
@@ -521,6 +516,27 @@ test('the watering switch reflects the pushed state, not what we asked for', asy
   await publishDeviceStates(gladys, device);
   states = Object.fromEntries(gladys.published.map((p) => [p.featureExternalId, p.state]));
   assert.equal(states[`meross:${device.uuid}-1B0091AFC74E:watering-0`], 0);
+});
+
+test('the duration comes from the timer itself before the config default', async () => {
+  // The timer remembers the last duration it was given, and reports it as
+  // `dura` in seconds. Preferring it means the duration shown in Gladys is the
+  // one the hardware will actually use, and it survives a restart — the
+  // per-timer override lives in memory only.
+  const device = wateringHub();
+  const sub = device.subDevices.get('1B0091AFC74E');
+
+  assert.equal(hub.wateringDuration(sub, { watering_duration: 15 }), 15, 'nothing read yet');
+
+  mergeSubIdPayload(device, NAMESPACE.CONTROL_WATER, {
+    control: [{ subId: '1B0091AFC74E', onoff: 2, dura: 900 }],
+  });
+  assert.equal(hub.wateringDuration(sub, { watering_duration: 5 }), 15, 'the timer wins');
+
+  // ...but an explicit choice by the user still wins over the hardware, or
+  // changing the duration in Gladys would be undone by the next poll.
+  sub.wateringDurationMinutes = 7;
+  assert.equal(hub.wateringDuration(sub, { watering_duration: 5 }), 7);
 });
 
 // --- Confirming a command actually took effect -------------------------------

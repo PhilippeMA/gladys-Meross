@@ -10,12 +10,14 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import {
   applySystemAll,
+  MerossClient,
   mergeDigest,
   readCachedSession,
   SESSION_KEYS,
 } from '../src/meross/client.js';
 import { extractUuid } from '../src/meross/mqttClient.js';
 import { buildFeatureKey, parseFeatureExternalId } from '../src/devices/featureIds.js';
+import { NAMESPACE } from '../src/meross/protocol.js';
 
 // --- Appliance.System.All ----------------------------------------------------
 
@@ -115,6 +117,65 @@ test('merging into a device that has no digest yet works', () => {
   const device = {};
   mergeDigest(device, { togglex: [{ channel: 0, onoff: 1 }] });
   assert.deepEqual(device.digest.togglex, [{ channel: 0, onoff: 1 }]);
+});
+
+// --- Polling a hub -----------------------------------------------------------
+
+test('polling a hub reads the watering state alongside the Hub namespaces', async () => {
+  // `Appliance.Control.Water` is readable, so the watering state must come off
+  // the poll and not only from a push — otherwise a cycle started from the
+  // Meross app, or by the timer's own schedule, is invisible until it ends.
+  // It is not an `Appliance.Hub.*` namespace though: it is keyed `control` and
+  // merges by `subId`, so it needs its own branch on the read path.
+  const client = new MerossClient();
+  const device = {
+    uuid: 'hub-uuid',
+    name: 'Smart Hub',
+    ability: { [NAMESPACE.HUB_BATTERY]: {}, [NAMESPACE.CONTROL_WATER]: {} },
+    subDevices: new Map([['1B0091AFC74E', { id: '1B0091AFC74E', name: 'Timer', state: {} }]]),
+  };
+
+  const sent = [];
+  client.request = async (uuid, namespace, method, payload) => {
+    sent.push({ namespace, payload });
+    if (namespace === NAMESPACE.CONTROL_WATER) {
+      return { control: [{ subId: '1B0091AFC74E', channel: 0, dura: 900, onoff: 2 }] };
+    }
+    return { battery: [{ id: '1B0091AFC74E', value: 98 }] };
+  };
+
+  await client.refreshSubDeviceStates(device, { maxAgeMs: 0 });
+
+  assert.deepEqual(
+    sent.find((entry) => entry.namespace === NAMESPACE.CONTROL_WATER)?.payload,
+    { control: [] },
+    'the read is keyed `control`, not `water`',
+  );
+
+  const sub = device.subDevices.get('1B0091AFC74E');
+  assert.equal(sub.state.control.onoff, 2);
+  assert.equal(sub.state.control.dura, 900);
+  assert.equal(sub.state.battery.value, 98, 'the Hub namespaces still merge as before');
+});
+
+test('a hub that does not advertise watering is not asked about it', async () => {
+  const client = new MerossClient();
+  const device = {
+    uuid: 'hub-uuid',
+    name: 'Smart Hub',
+    ability: { [NAMESPACE.HUB_BATTERY]: {} },
+    subDevices: new Map(),
+  };
+
+  const sent = [];
+  client.request = async (uuid, namespace) => {
+    sent.push(namespace);
+    return {};
+  };
+
+  await client.refreshSubDeviceStates(device, { maxAgeMs: 0 });
+
+  assert.deepEqual(sent, [NAMESPACE.HUB_BATTERY]);
 });
 
 // --- Session cache -----------------------------------------------------------

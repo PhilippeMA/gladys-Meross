@@ -352,14 +352,11 @@ export class MerossClient {
       }
       logger.warn(
         `${device.name} did not answer on the LAN at ${device.ip} — ` +
-          `${isReachable.lastError ?? 'unknown reason'}. Using the cloud; namespaces that ` +
-          `only exist locally (watering) will not work.`,
+          `${isReachable.lastError ?? 'unknown reason'}. Using the cloud, which serves every ` +
+          `namespace this integration needs; only the round trip is slower.`,
       );
     } else {
-      logger.warn(
-        `${device.name} disclosed no LAN address, using the cloud. ` +
-          `Namespaces that only exist locally will not work.`,
-      );
+      logger.warn(`${device.name} disclosed no LAN address, using the cloud.`);
     }
 
     device.localOk = false;
@@ -460,50 +457,6 @@ export class MerossClient {
     return this.cloudRequest(uuid, namespace, method, payload, { timeoutMs });
   }
 
-  /**
-   * Force a message through the LAN, never the cloud.
-   *
-   * Some namespaces exist ONLY on the local channel. `Appliance.Control.Water`
-   * is one: over MQTT the hub never answers it (the request just times out),
-   * while a direct POST to the hub is acknowledged immediately — which is
-   * exactly what the Meross app does to start a watering.
-   *
-   * Falling back to the cloud here would be pointless, so a missing or
-   * unreachable LAN address fails fast with an explanation instead of after a
-   * ten-second silence.
-   */
-  async requestLocal(uuid, namespace, method, payload = {}, { timeoutMs } = {}) {
-    const device = this.devices.get(uuid);
-    if (!device) {
-      throw new Error(`Unknown Meross device ${uuid}`);
-    }
-    if (!device.ip) {
-      throw new Error(
-        `${namespace} only works over the local network, but the LAN address of ` +
-          `"${device.name}" is unknown. Check that the hub is online and that Gladys can ` +
-          `reach it directly.`,
-      );
-    }
-
-    try {
-      return await localRequest({
-        ip: device.ip,
-        key: this.session.key,
-        uuid: device.uuid,
-        namespace,
-        method,
-        payload,
-        timeoutMs,
-      });
-    } catch (err) {
-      throw new Error(
-        `${namespace} only works over the local network and ${device.ip} did not answer ` +
-          `(${err.message}). The Gladys container must be able to reach that address.`,
-        { cause: err },
-      );
-    }
-  }
-
   /** Force a message through the cloud broker. */
   async cloudRequest(uuid, namespace, method, payload = {}, { timeoutMs } = {}) {
     if (!this.mqtt?.connected) {
@@ -602,15 +555,23 @@ export class MerossClient {
       NAMESPACE.HUB_BATTERY,
       NAMESPACE.HUB_TOGGLEX,
       NAMESPACE.HUB_ONLINE,
+      // Not an `Appliance.Hub.*` namespace, but read on the same pass: this is
+      // where a watering timer keeps whether it is watering and for how long.
+      // It targets sub-devices by `subId`, so it merges differently.
+      NAMESPACE.CONTROL_WATER,
     ]) {
       if (!(namespace in device.ability)) {
         continue;
       }
+      const bySubId = isSubIdNamespace(namespace);
+      const key = bySubId ? HUB_SUBID_PAYLOAD_KEYS[namespace] : HUB_PAYLOAD_KEYS[namespace];
       try {
-        const payload = await this.request(device.uuid, namespace, METHOD.GET, {
-          [HUB_PAYLOAD_KEYS[namespace]]: [],
-        });
-        mergeHubPayload(device, namespace, payload);
+        const payload = await this.request(device.uuid, namespace, METHOD.GET, { [key]: [] });
+        if (bySubId) {
+          mergeSubIdPayload(device, namespace, payload);
+        } else {
+          mergeHubPayload(device, namespace, payload);
+        }
       } catch (err) {
         logger.warn(`Hub ${device.name} did not answer ${namespace}`, err);
       }

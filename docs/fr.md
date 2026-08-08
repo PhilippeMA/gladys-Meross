@@ -142,24 +142,25 @@ l'intégration a su le traiter. S'il s'agit d'un capteur censé être derrière 
 qu'il est bien appairé à ce hub dans l'application Meross. L'intégration écrit également une
 ligne de log pour chaque appareil ignoré, en précisant ce qu'elle a vu.
 
-**L'arrosage échoue avec « only works over the local network »** — la machine qui exécute
-Gladys ne peut pas joindre votre hub en direct. Le message précise la raison :
+**L'adresse locale de mon appareil ne répond pas** — l'intégration bascule sur le cloud et
+le signale dans les logs, avec la raison :
 
-- _no route to the device_ — Gladys n'est pas sur le même réseau que le hub. C'est le cas
+- _no route to the device_ — Gladys n'est pas sur le même réseau que l'appareil. C'est le cas
   habituel quand Gladys tourne dans Docker sur un autre sous-réseau ou un autre VLAN.
 - _connection refused_ — l'adresse répond mais rien n'écoute : ce n'est probablement plus
-  votre hub (bail DHCP qui a changé). Utilisez **Rafraîchir la liste des appareils**.
+  votre appareil (bail DHCP qui a changé). Utilisez **Rafraîchir la liste des appareils**.
 - _no answer before the timeout_ — un pare-feu bloque les paquets.
 
 Pour vérifier depuis la machine qui héberge Gladys :
 
 ```bash
-curl -m 3 -X POST http://<ip-du-hub>/config -d '{}'
+curl -m 3 -X POST http://<ip-de-l-appareil>/config -d '{}'
 ```
 
-Toute réponse autre qu'une erreur de connexion signifie que le hub est joignable. Sinon, la
-correction est côté réseau — Gladys doit pouvoir atteindre l'adresse du hub. Tout le reste de
-l'intégration continue de fonctionner via le cloud ; seul l'arrosage exige le canal local.
+Toute réponse autre qu'une erreur de connexion signifie que l'appareil est joignable. Sinon,
+la correction est côté réseau. **Ce n'est pas bloquant** : toutes les fonctions de
+l'intégration, arrosage compris, passent aussi par le cloud — seul le temps de réponse en
+souffre.
 
 **Rien ne fonctionne et je veux savoir pourquoi** — l'intégration journalise tout ce qu'elle
 fait. Ouvrez les logs de l'intégration depuis l'interface Gladys (ou `docker logs` sur

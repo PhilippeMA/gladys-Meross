@@ -216,9 +216,10 @@ export function buildSubDeviceFeatures(sub, ids) {
         min: 0,
         max: 1,
         read_only: false,
-        // The timer never reports whether it is watering, so this state is what
-        // Gladys commanded, cleared automatically when the duration elapses.
-        has_feedback: false,
+        // The timer does report whether it is watering, through
+        // `Appliance.Control.Water` — so a cycle started from the Meross app or
+        // by the device's own schedule shows up here too.
+        has_feedback: true,
         keep_history: true,
       },
       {
@@ -372,9 +373,10 @@ export function buildSubDeviceStates(sub) {
       state: wateringDuration(sub),
     });
 
-    // `Appliance.Control.Water` is a PUSH namespace: the timer reports when a
-    // cycle starts and ends. That is the real state, better than the value we
-    // commanded — it also catches a watering started from the Meross app.
+    // `Appliance.Control.Water` carries the real cycle state, both on poll and
+    // on push: `onoff` is 1 while watering and 2 once stopped. Publishing that
+    // rather than the value we commanded is what catches a watering started
+    // from the Meross app or by the timer's own schedule.
     const onoff = Number(state.control?.onoff);
     if (Number.isFinite(onoff)) {
       states.push({
@@ -409,10 +411,11 @@ export async function onSetValue(client, { gladys, device, subDeviceId, kind, va
       const minutes = wateringDuration(sub, config);
 
       requireAbility(device, NAMESPACE.CONTROL_WATER, subDeviceId);
-      // LAN only: the hub advertises this namespace but never answers it over
-      // MQTT. The Meross app itself starts a watering with a direct POST to the
-      // hub, and that is the only channel that works.
-      await client.requestLocal(
+      // Normal routing — LAN when it answers, cloud otherwise. This namespace
+      // looked LAN-only for a while because it kept timing out over MQTT, but
+      // the cause was the payload shape: it is keyed `control` and targets the
+      // sub-device by `subId`, and anything else is answered with silence.
+      await client.request(
         device.uuid,
         NAMESPACE.CONTROL_WATER,
         METHOD.SET,
@@ -473,18 +476,35 @@ export async function onSetValue(client, { gladys, device, subDeviceId, kind, va
 /** How long a sub-device is given to adopt a command before we read it back. */
 const SETTLE_DELAY_MS = 600;
 
-/** Watering duration for one timer: its own setting, else the integration default. */
+/**
+ * Watering duration for one timer, in minutes.
+ *
+ * Three sources, most specific first: what the user set in Gladys for THIS
+ * timer, then what the timer itself holds (`dura`, in seconds — it remembers
+ * the last duration it was given, so this survives a restart of the
+ * integration), then the integration-wide default.
+ */
 export function wateringDuration(sub, config) {
-  return normalizeWateringDuration(sub?.wateringDurationMinutes ?? config?.watering_duration);
+  if (sub?.wateringDurationMinutes !== undefined) {
+    return normalizeWateringDuration(sub.wateringDurationMinutes);
+  }
+
+  const seconds = Number(sub?.state?.control?.dura);
+  if (Number.isFinite(seconds) && seconds > 0) {
+    return normalizeWateringDuration(Math.round(seconds / 60));
+  }
+
+  return normalizeWateringDuration(config?.watering_duration);
 }
 
 /**
  * Turn the Watering switch back off when the watering ends.
  *
- * The timer waters for `dura` seconds and stops by itself, but it never reports
- * that it has: there is no watering state to read back. Without this the switch
- * would stay on forever after a single watering. Starting a new watering — or
- * stopping one — replaces the pending timer.
+ * The timer waters for `dura` seconds and stops by itself. The next poll of
+ * `Appliance.Control.Water` sees that and is the authority, but a poll can be a
+ * whole minute away — this simply spares the user a switch left visibly on
+ * after the water has stopped. Starting a new watering, or stopping one,
+ * replaces the pending timer.
  */
 function scheduleWateringStop(gladys, device, subDeviceId, durationSeconds) {
   const sub = device.subDevices?.get(subDeviceId);

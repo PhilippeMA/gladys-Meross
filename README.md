@@ -63,21 +63,31 @@ Android app rather than from probing:
 - **stopping uses `onoff: 2`**, not `0`. Sending `0` is not "stop";
 - `dura` is the duration in **seconds**, and is omitted when stopping.
 
-A timer therefore exposes a **Watering** switch and a **Watering duration** (minutes,
-per timer, defaulting to the integration-wide setting). The timer never reports whether it
-is watering, so the switch carries what Gladys commanded and is cleared automatically when
-the duration elapses — otherwise it would stay on forever after one watering.
+The same shape reads back, so the namespace is polled as well as pushed:
 
-**`Appliance.Control.Water` is LAN-only.** The hub advertises it but never answers it over
-MQTT — the request simply times out, exactly like `Appliance.Control.WaterEvent`. The Meross
-app starts a watering with a direct `POST http://<hub-ip>/config`, and that is the only
-channel that works, so watering commands are sent with `client.requestLocal()` rather than
-the usual routing. **Gladys must be able to reach the hub's LAN address**; when it cannot,
-the command fails immediately with that explanation instead of hanging for ten seconds.
+```json
+{ "control": [{ "subId": "1B0091AFC74E", "channel": 0, "dura": 900, "onoff": 2, "lmTime": 0 }] }
+```
 
-`Appliance.Control.Water` also refuses every GET (`error 5000`), so there is no watering
-state to read back. Schedules
-(`Digest.WaterPlan`, `Config.WaterPlan`) are equally unreadable and are not exposed.
+A timer therefore exposes a **Watering** switch that reflects what the hardware is really
+doing — a cycle started from the Meross app or by the timer's own schedule shows up in
+Gladys too — and a **Watering duration** in minutes. The duration is read from the timer's
+own `dura`, which it remembers between cycles; setting it in Gladys overrides that for the
+next watering, and the device then keeps it.
+
+The switch is also cleared by a local timer when the duration elapses. That is not the
+authority — the next poll is — it just spares the user a switch left visibly on for up to a
+minute after the water stopped.
+
+**This namespace looked LAN-only for a while, and it is not.** Over MQTT it answers with
+silence to anything keyed other than `control`, which is indistinguishable from a transport
+that does not carry it. With the right shape the cloud serves it like any other namespace,
+so watering uses the normal routing and works on hubs Gladys cannot reach directly.
+
+`Appliance.Control.WaterEvent` really is unreadable — it is push-only by design, and every
+GET goes unanswered. Schedules are readable through `Appliance.Digest.WaterPlan` (keyed
+`digest`, targeted by `subId`) but `Appliance.Config.WaterPlan` refuses every shape with
+`error 5000`, so schedules are not exposed.
 
 ## How it works
 
