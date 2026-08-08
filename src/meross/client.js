@@ -83,6 +83,21 @@ const PROBE_TIMEOUT_MS = 6000;
 export const LOCAL_PORTS = [80, 5010];
 
 /**
+ * Where to look for the local endpoint, most likely first.
+ *
+ * `/config` on 80 is the documented Meross endpoint. An MSH400 answers nothing
+ * there and replies HTTP 470 on 5010, so the root path is asked too: a 470 that
+ * does not depend on the path means the port is refusing us, while a different
+ * status per path means the service is routing and we simply have the wrong one.
+ */
+export const LOCAL_PROBES = [
+  { port: 80, path: '/config' },
+  { port: 5010, path: '/config' },
+  { port: 5010, path: '/' },
+  { port: 80, path: '/' },
+];
+
+/**
  * Request shapes to try when reading an undocumented namespace, most likely
  * first: a bare read, then the namespace's own key as an object, then as an
  * array (hub-style namespaces answer lists).
@@ -722,33 +737,27 @@ export class MerossClient {
    * unsigned probe hangs exactly like a dead endpoint would. Only a real,
    * signed request separates "not listening" from "listening and refusing us".
    */
-  async probeLocalPorts(device, ports = LOCAL_PORTS) {
+  async probeLocalPorts(device, probes = LOCAL_PROBES) {
     if (!device.ip) {
       return [];
     }
 
     const results = [];
 
-    for (const port of ports) {
-      // With and without the target uuid in the header. The Meross app sends
-      // it on local requests, but the signature does not cover it, so a
-      // firmware that validates the header strictly could reject one and accept
-      // the other — and a status of 470 is exactly the kind of answer that
-      // would come from a header check.
-      for (const withUuid of [true, false]) {
-        try {
-          const payload = await localRequest({
-            ip: device.ip,
-            key: this.session?.key,
-            uuid: withUuid ? device.uuid : undefined,
-            namespace: NAMESPACE.SYSTEM_ALL,
-            method: METHOD.GET,
-            port,
-          });
-          results.push({ port, withUuid, ok: true, answered: Object.keys(payload ?? {}) });
-        } catch (err) {
-          results.push({ port, withUuid, ok: false, error: err.message });
-        }
+    for (const { port, path } of probes) {
+      try {
+        const payload = await localRequest({
+          ip: device.ip,
+          key: this.session?.key,
+          uuid: device.uuid,
+          namespace: NAMESPACE.SYSTEM_ALL,
+          method: METHOD.GET,
+          port,
+          path,
+        });
+        results.push({ port, path, ok: true, answered: Object.keys(payload ?? {}) });
+      } catch (err) {
+        results.push({ port, path, ok: false, error: err.message });
       }
     }
 

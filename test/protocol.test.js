@@ -212,10 +212,21 @@ test('a network error is found however deeply Node buried it', () => {
     /packets are being dropped/,
   );
 
-  // A cycle must not hang the logger.
+  // A cycle must not hang the logger, nor print the same sentence six times.
   const looping = { message: 'fetch failed' };
   looping.cause = looping;
   assert.equal(describeNetworkError(looping), 'fetch failed');
+
+  // With no code anywhere, the chain of causes is reported: something in it
+  // names the failure, where the "fetch failed" wrapper names nothing.
+  assert.equal(
+    describeNetworkError(
+      Object.assign(new TypeError('fetch failed'), {
+        cause: new Error('other side closed'),
+      }),
+    ),
+    'TypeError: fetch failed <- Error: other side closed',
+  );
 });
 
 test('light capacity bits are the Meross ones', () => {

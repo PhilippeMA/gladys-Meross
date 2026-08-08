@@ -260,27 +260,21 @@ test('the local probe reports each port separately, signed', async () => {
   };
 
   try {
-    const results = await client.probeLocalPorts(device);
+    const results = await client.probeLocalPorts(device, [
+      { port: 80, path: '/config' },
+      { port: 5010, path: '/config' },
+    ]);
 
-    // Each port, with and without the uuid header: a firmware that validates
-    // the header strictly could accept one and reject the other.
     assert.deepEqual(
-      results.map((r) => `${r.port}${r.withUuid ? '+uuid' : ''}:${r.ok}`),
-      ['80+uuid:true', '80:true', '5010+uuid:false', '5010:false'],
+      results.map((r) => `${r.port}${r.path}:${r.ok}`),
+      ['80/config:true', '5010/config:false'],
     );
-    assert.match(results[2].error, /nothing is listening/);
+    assert.match(results[1].error, /nothing is listening/);
     // Port 80 keeps the bare address; anything else is spelled out.
     assert.deepEqual(
       seen.map((s) => s.url),
-      [
-        'http://192.168.50.24/config',
-        'http://192.168.50.24/config',
-        'http://192.168.50.24:5010/config',
-        'http://192.168.50.24:5010/config',
-      ],
+      ['http://192.168.50.24/config', 'http://192.168.50.24:5010/config'],
     );
-    assert.equal(seen[0].body.header.uuid, 'hub');
-    assert.equal('uuid' in seen[1].body.header, false, 'the second variant omits it');
     // And every probe is signed, which is the entire point.
     for (const { body } of seen) {
       assert.match(body.header.sign, /^[0-9a-f]{32}$/);
@@ -314,7 +308,7 @@ test('a non-2xx local reply is reported with its body, not just its status', asy
   });
 
   try {
-    const [result] = await client.probeLocalPorts(device, [5010]);
+    const [result] = await client.probeLocalPorts(device, [{ port: 5010, path: '/config' }]);
     assert.equal(result.ok, false);
     assert.match(result.error, /HTTP 470/);
     assert.match(result.error, /5001/, 'the body is what says why');
@@ -332,7 +326,7 @@ test('an unreadable or empty body still produces a usable message', async () => 
   globalThis.fetch = async () => ({ ok: false, status: 470, text: async () => '   ' });
 
   try {
-    const [result] = await client.probeLocalPorts(device, [80]);
+    const [result] = await client.probeLocalPorts(device, [{ port: 80, path: '/config' }]);
     assert.match(result.error, /HTTP 470 .*empty body/);
   } finally {
     globalThis.fetch = originalFetch;

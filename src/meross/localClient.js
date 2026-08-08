@@ -35,6 +35,9 @@ const DEFAULT_TIMEOUT_MS = 4000;
 /** Where the unadvertised HTTP endpoint listens. */
 export const DEFAULT_PORT = 80;
 
+/** The path it serves. */
+export const DEFAULT_PATH = '/config';
+
 /**
  * Send one message directly to a device on the LAN.
  *
@@ -56,12 +59,14 @@ export async function localRequest({
   payload = {},
   timeoutMs = DEFAULT_TIMEOUT_MS,
   port = DEFAULT_PORT,
+  path = DEFAULT_PATH,
 }) {
   if (!ip) {
     throw new Error('No LAN address known for this device');
   }
 
   const address = port === DEFAULT_PORT ? ip : `${ip}:${port}`;
+  const url = `http://${address}${path}`;
 
   // The Meross app sends `from` and `uuid` on local requests; mirroring it
   // keeps us on the exact shape the firmware is known to accept.
@@ -70,15 +75,15 @@ export async function localRequest({
     method,
     payload,
     key,
-    from: `http://${address}/config`,
+    from: url,
     uuid,
   });
 
-  logger.debug(`LAN ${method} ${namespace} -> ${address}`);
+  logger.debug(`LAN ${method} ${namespace} -> ${url}`);
 
   let response;
   try {
-    response = await fetch(`http://${address}/config`, {
+    response = await fetch(url, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(message),
@@ -90,7 +95,7 @@ export async function localRequest({
     // ENETUNREACH mean there is no route to the device's network, ECONNREFUSED
     // means the host is there but nothing listens, and a timeout means packets
     // are being dropped. Surface it.
-    throw new Error(`${describeNetworkError(err)} (${address})`, { cause: err });
+    throw new Error(`${describeNetworkError(err)} (${url})`, { cause: err });
   }
 
   if (!response.ok) {
@@ -98,8 +103,13 @@ export async function localRequest({
     // statuses (470 has been seen on an MSH400) and puts the reason in the body
     // — usually a normal Meross envelope with an error payload. Throwing on the
     // status alone discards the only explanation there is.
+    // Read the headers too. An empty body says nothing; `server` or
+    // `content-type` often names the service that answered, which is the
+    // difference between "the Meross endpoint refused us" and "something else
+    // entirely is listening on this port".
     throw new Error(
-      `Meross LAN HTTP ${response.status} from ${address}: ${await readBody(response)}`,
+      `Meross LAN HTTP ${response.status} from ${url}: ${await readBody(response)}` +
+        ` [${describeHeaders(response)}]`,
     );
   }
 
@@ -123,6 +133,16 @@ export async function localRequest({
   }
 
   return body?.payload ?? {};
+}
+
+/** The response headers worth naming when the body is empty. */
+function describeHeaders(response) {
+  const interesting = ['server', 'content-type', 'content-length', 'connection', 'allow'];
+  const seen = interesting
+    .map((name) => [name, response.headers?.get?.(name)])
+    .filter(([, value]) => value)
+    .map(([name, value]) => `${name}: ${value}`);
+  return seen.length ? seen.join('; ') : 'no headers';
 }
 
 /** Whatever a failing response has to say, capped so a log line stays a line. */
@@ -191,7 +211,27 @@ export function describeNetworkError(err) {
   // the device accepted the connection and then dropped it, which is a real
   // finding and reads as nothing at all without the code.
   const message = err?.message ?? 'unknown network error';
-  return code ? `${message} (${code})` : message;
+  if (code) {
+    return `${message} (${code})`;
+  }
+
+  // No code anywhere: report the chain of causes instead. Something in it
+  // names the failure, and a bare "fetch failed" has now cost several rounds
+  // of guessing.
+  // Consecutive duplicates carry nothing: a self-referencing cause would
+  // otherwise print the same sentence six times.
+  const trail = causeTrail(err).filter((label, index, all) => label !== all[index - 1]);
+  return trail.length > 1 ? trail.join(' <- ') : message;
+}
+
+/** Every `name: message` down the cause chain, for a failure with no code. */
+function causeTrail(err, depth = 0) {
+  if (!err || depth > 5) {
+    return [];
+  }
+  const label = `${err.name ?? 'Error'}: ${err.message ?? ''}`.trim();
+  const nested = (err.errors ?? []).flatMap((entry) => causeTrail(entry, depth + 1));
+  return [label, ...nested, ...causeTrail(err.cause, depth + 1)];
 }
 
 /**
