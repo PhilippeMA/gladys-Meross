@@ -190,6 +190,34 @@ test('a network failure is explained, not reported as "fetch failed"', () => {
   assert.equal(describeNetworkError({ message: 'something else' }), 'something else');
 });
 
+test('a network error is found however deeply Node buried it', () => {
+  // Node nests causes, and when a host has several addresses it reports an
+  // AggregateError whose own `code` is undefined. Reading `cause.code` alone
+  // gives a bare "fetch failed" exactly when the reason is what you need.
+  const aggregate = new AggregateError(
+    [{ code: 'EHOSTUNREACH' }, { code: 'ECONNREFUSED' }],
+    'all attempts failed',
+  );
+  assert.match(
+    describeNetworkError({ message: 'fetch failed', cause: aggregate }),
+    /no route to the device/,
+  );
+
+  // And through a chain of causes.
+  assert.match(
+    describeNetworkError({
+      message: 'fetch failed',
+      cause: { message: 'wrapped', cause: { code: 'ETIMEDOUT' } },
+    }),
+    /packets are being dropped/,
+  );
+
+  // A cycle must not hang the logger.
+  const looping = { message: 'fetch failed' };
+  looping.cause = looping;
+  assert.equal(describeNetworkError(looping), 'fetch failed');
+});
+
 test('light capacity bits are the Meross ones', () => {
   assert.deepEqual(LIGHT_CAPACITY, { RGB: 1, TEMPERATURE: 2, LUMINANCE: 4 });
 });

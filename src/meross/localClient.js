@@ -111,9 +111,34 @@ export async function localRequest({
   return body?.payload ?? {};
 }
 
+/**
+ * The first network error code buried anywhere under a fetch rejection.
+ *
+ * `err.cause` is not reliably the real error: Node nests causes, and when a
+ * host resolves to several addresses it reports an `AggregateError` whose own
+ * `code` is undefined and whose `errors` hold the real ones. Reading only
+ * `cause.code` therefore yields a bare "fetch failed" precisely when the
+ * diagnosis matters most.
+ */
+function findErrorCode(err, depth = 0) {
+  if (!err || depth > 5) {
+    return undefined;
+  }
+  if (typeof err.code === 'string') {
+    return err.code;
+  }
+  for (const nested of err.errors ?? []) {
+    const code = findErrorCode(nested, depth + 1);
+    if (code) {
+      return code;
+    }
+  }
+  return findErrorCode(err.cause, depth + 1);
+}
+
 /** Turn an opaque fetch rejection into something a user can act on. */
 export function describeNetworkError(err) {
-  const code = err?.cause?.code ?? err?.code;
+  const code = findErrorCode(err);
 
   switch (code) {
     case 'EHOSTUNREACH':
