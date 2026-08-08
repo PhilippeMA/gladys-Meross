@@ -36,6 +36,7 @@ in the Meross app.
 | Thermostatic valve | MTS100, MTS150 | Target temperature, room temperature, on/off, battery |
 | Water leak sensor  | MS400, MS405   | Leak detected, battery                                |
 | Door/window sensor | MS200          | Opening, battery                                      |
+| Watering timer     | MST100         | Timer enabled, battery — see the limitation below     |
 
 Sub-device features are derived from the **data a sub-device actually reports**, with its
 type only as a fallback hint: hub generations name their types inconsistently, but they all
@@ -48,9 +49,10 @@ wrong mapping would mislabel the modes in the UI.
 
 #### Watering timers (MST100 on an MSH400 sprinkler hub)
 
-Battery and on/off state are read correctly, and the on/off command is accepted and adopted
-by the device. **But it does not start a watering** — on a sprinkler timer, on/off is not a
-watering trigger.
+Battery and on/off state are read correctly, and the command is accepted and adopted by the
+device. **But it does not start a watering** — on a sprinkler timer, on/off is not a watering
+trigger. The feature is therefore named **Timer enabled** rather than On/Off: it is a real,
+working control, just not the one the name "On/Off" would suggest.
 
 Everything below was established against real hardware (MSH400 + MST100), and it is where
 the investigation stopped:

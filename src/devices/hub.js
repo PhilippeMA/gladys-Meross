@@ -64,7 +64,17 @@ function hasThermostat(sub) {
  * timer (MST100), which is a plain relay as far as the hub is concerned.
  */
 function hasToggle(sub) {
-  return Boolean(sub.state?.togglex) || hasThermostat(sub) || sub.type?.startsWith('mst1');
+  return Boolean(sub.state?.togglex) || hasThermostat(sub) || isWateringTimer(sub);
+}
+
+/**
+ * A watering timer (MST100 on an MSH400 sprinkler hub).
+ *
+ * Detected by type alone, unlike the other kinds: a timer reports nothing but
+ * `togglex` and `battery`, which is indistinguishable from a generic relay.
+ */
+function isWateringTimer(sub) {
+  return Boolean(sub.type?.startsWith('mst'));
 }
 
 /** A water leak sensor (MS400 / MS405). */
@@ -185,7 +195,10 @@ export function buildSubDeviceFeatures(sub, ids) {
 
   if (hasToggle(sub)) {
     features.push({
-      name: 'On/Off',
+      // On a watering timer this switch is NOT a watering trigger: the device
+      // accepts and adopts it, but nothing is watered. It enables the timer, so
+      // name it for what it does — "On/Off" invites the wrong expectation.
+      name: isWateringTimer(sub) ? 'Timer enabled' : 'On/Off',
       external_id: ids.feature(buildFeatureKey(FEATURE_KIND.ON_OFF, 0)),
       category: DEVICE_FEATURE_CATEGORIES.SWITCH,
       type: DEVICE_FEATURE_TYPES.SWITCH.BINARY,

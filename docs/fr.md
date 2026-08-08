@@ -30,7 +30,7 @@ vous lui avez donné dans l'application Meross.
 | Vanne thermostatique (MTS100/150) | Température de consigne, température ambiante, marche/arrêt, batterie |
 | Détecteur de fuite (MS400)        | Fuite détectée, niveau de batterie                                    |
 | Capteur d'ouverture (MS200)       | Ouverture, niveau de batterie                                         |
-| Programmateur d'arrosage (MST100) | Batterie et état marche/arrêt — voir la limitation ci-dessous         |
+| Programmateur d'arrosage (MST100) | « Timer enabled » et batterie — voir la limitation ci-dessous         |
 
 Si votre hub semble ne rien faire, vérifiez qu'au moins un capteur lui est **appairé dans
 l'application Meross** : un hub sans capteur n'a rien à afficher. Le bouton **Diagnostiquer
@@ -42,9 +42,10 @@ température de consigne, qui est l'essentiel pour les automatisations.
 #### Les programmateurs d'arrosage ne peuvent pas encore être déclenchés
 
 Si vous avez un programmateur d'arrosage MST100 sur un hub MSH400, vous obtenez son **niveau
-de batterie** et son **état marche/arrêt**, et ils fonctionnent. L'interrupteur est bien
-accepté par l'appareil — mais il **ne déclenche pas d'arrosage** : sur un programmateur,
-marche/arrêt n'est pas une commande d'arrosage.
+de batterie** et un interrupteur **« Timer enabled »**, et les deux fonctionnent. Cet
+interrupteur pilote réellement l'appareil — mais il **ne déclenche pas d'arrosage** : sur un
+programmateur, marche/arrêt n'est pas une commande d'arrosage. D'où ce nom plutôt que
+« On/Off ». Vous pouvez le renommer dans Gladys si vous préférez un libellé français.
 
 Meross n'expose pas les commandes d'arrosage sur le canal utilisé par cette intégration : le
 hub les annonce, puis refuse toute lecture. Déclencher un arrosage depuis Gladys n'est donc

@@ -18,6 +18,7 @@ import {
   simplePlug,
   smartHub,
   unsupportedDevice,
+  wateringTimer,
 } from './helpers/merossFixtures.js';
 import {
   buildDiscoveredDevices,
@@ -527,6 +528,31 @@ test('a valve exposes a target temperature bounded by the range it reports', () 
   assert.equal(target.min, 5);
   assert.equal(target.max, 35);
   assert.equal(target.read_only, false);
+});
+
+test('a watering timer names its switch for what it actually does', () => {
+  // The device accepts and adopts this switch but waters nothing: calling it
+  // "On/Off" invites the user to expect a watering it cannot trigger.
+  const gladys = createFakeGladys();
+  const device = smartHub({ subDevices: new Map([['1B0091AFC74E', wateringTimer()]]) });
+
+  const [timer] = buildDiscoveredDevices(gladys, [device], config);
+
+  assert.deepEqual(
+    timer.features.map((f) => f.name),
+    ['Timer enabled', 'Battery'],
+  );
+  // Still controllable: it is a real state the device honours.
+  assert.equal(feature(timer, 'on-off-0').read_only, false);
+  assert.equal(feature(timer, 'battery-0').read_only, true);
+});
+
+test('a thermostatic valve keeps its plain On/Off name', () => {
+  const gladys = createFakeGladys();
+  const [, valve] = buildDiscoveredDevices(gladys, [smartHub()], config);
+
+  assert.ok(valve.features.some((f) => f.name === 'On/Off'));
+  assert.ok(!valve.features.some((f) => f.name === 'Timer enabled'));
 });
 
 test('a leak sensor exposes its leak state and battery', () => {

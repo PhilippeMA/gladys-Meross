@@ -255,6 +255,24 @@ export function smartHub(overrides = {}) {
 }
 
 /**
+ * MST100 watering timer behind an MSH400 sprinkler hub: it reports nothing but
+ * its relay and its battery, exactly as the real hardware does.
+ */
+export function wateringTimer(overrides = {}) {
+  return {
+    id: '1B0091AFC74E',
+    name: 'Programmateur arrosage',
+    type: 'mst100',
+    state: {
+      battery: { value: 98 },
+      togglex: { onoff: 0 },
+      online: { status: 1, lastActiveTime: 1786189193 },
+    },
+    ...overrides,
+  };
+}
+
+/**
  * Minimal stand-in for MerossClient, recording the requests the device layer
  * makes so the tests can assert the exact namespace/payload sent to hardware.
  */

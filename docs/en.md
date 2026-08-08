@@ -28,7 +28,7 @@ in Gladys — **each sensor paired to it does**, under the name you gave it in t
 | Thermostatic valve (MTS100/150) | Target temperature, room temperature, on/off, battery |
 | Water leak sensor (MS400)       | Leak detected, battery level                          |
 | Door/window sensor (MS200)      | Opening, battery level                                |
-| Watering timer (MST100)         | Battery and on/off state — see the limitation below   |
+| Watering timer (MST100)         | Timer enabled, battery — see the limitation below     |
 
 If your hub appears to do nothing, check that at least one sensor is **paired to it in the
 Meross app**: a hub with nothing paired has nothing to show. The **Diagnose my devices**
@@ -39,9 +39,10 @@ temperature, which is what automations need most.
 
 #### Watering timers cannot be triggered yet
 
-If you have an MST100 watering timer on an MSH400 hub, you get its **battery level** and its
-**on/off state**, and those work. The on/off switch is accepted by the device — but it does
-**not start a watering**: on a sprinkler timer, on/off is not a watering trigger.
+If you have an MST100 watering timer on an MSH400 hub, you get its **battery level** and a
+**Timer enabled** switch, and both work. That switch really does control the device — but it
+does **not start a watering**: on a sprinkler timer, on/off is not a watering trigger. It is
+named "Timer enabled" for exactly that reason.
 
 Meross does not expose the watering commands over the channel this integration uses: the hub
 announces them, then refuses every read. Triggering a watering from Gladys is therefore not
