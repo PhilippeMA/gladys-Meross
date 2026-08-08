@@ -44,6 +44,13 @@ const DEFAULT_REQUEST_TIMEOUT_MS = 10_000;
 /** `err.code` set on a request the device never answered. */
 export const TIMEOUT_ERROR_CODE = 'MEROSS_TIMEOUT';
 
+/**
+ * How many inbound messages to remember, so a request that times out can say
+ * what DID arrive while it was waiting. "No answer" and "an answer we failed to
+ * recognise" look identical from the outside and have opposite fixes.
+ */
+const INBOUND_HISTORY = 8;
+
 export class MerossMqttClient {
   /**
    * @param {object} options
@@ -67,8 +74,11 @@ export class MerossMqttClient {
 
     /** @type {import('mqtt').MqttClient | null} */
     this.client = null;
-    /** messageId -> { resolve, reject, timer } */
+    /** messageId -> { namespace, resolve, reject, timer } */
     this.pending = new Map();
+    /** Recent inbound messages, `[{ seq, label }]`, for timeout diagnostics. */
+    this.inbound = [];
+    this.inboundSeq = 0;
   }
 
   get connected() {
@@ -92,7 +102,7 @@ export class MerossMqttClient {
       rejectUnauthorized: true,
     });
 
-    this.client.on('message', (topic, payload) => this.#handleMessage(topic, payload));
+    this.client.on('message', (topic, payload) => this.handleInbound(topic, payload));
     this.client.on('error', (err) => logger.error('MQTT error', err));
     this.client.on('reconnect', () => logger.info('Reconnecting to the Meross broker...'));
     this.client.on('close', () => logger.debug('Meross broker connection closed'));
@@ -139,10 +149,16 @@ export class MerossMqttClient {
       messageId,
     });
 
+    // Everything that arrives after this point is a candidate explanation if
+    // the request ends up timing out.
+    const mark = this.inboundSeq;
+
     const reply = new Promise((resolve, reject) => {
       const timer = setTimeout(() => {
         this.pending.delete(messageId);
-        const err = new Error(`Meross device ${uuid} did not answer ${namespace} in time`);
+        const err = new Error(
+          `Meross device ${uuid} did not answer ${namespace} in time. ${this.#describeSilence(mark)}`,
+        );
         // Tagged so callers can tell "not answering at all" from "answering
         // with a refusal": silence means the namespace is a dead end, while a
         // refusal only means this particular request was wrong.
@@ -151,7 +167,7 @@ export class MerossMqttClient {
       }, timeoutMs);
       // `unref` so a pending command never keeps the process alive on shutdown.
       timer.unref?.();
-      this.pending.set(messageId, { resolve, reject, timer });
+      this.pending.set(messageId, { namespace, resolve, reject, timer });
     });
 
     try {
@@ -170,8 +186,12 @@ export class MerossMqttClient {
     return reply;
   }
 
-  /** Route an inbound message: either a reply we are waiting for, or a push. */
-  #handleMessage(topic, rawPayload) {
+  /**
+   * Route an inbound message: either a reply we are waiting for, or a push.
+   *
+   * Public rather than private only so tests can drive it without a broker.
+   */
+  handleInbound(topic, rawPayload) {
     let message;
     try {
       message = JSON.parse(rawPayload.toString());
@@ -188,9 +208,18 @@ export class MerossMqttClient {
     }
 
     const { messageId, method, namespace } = message.header ?? {};
+    this.#recordInbound(namespace, method);
 
+    // A reply is identified by the messageId WE generated, confirmed by the
+    // namespace we asked about — or by an error namespace, which is how a
+    // refusal comes back.
+    //
+    // The METHOD is deliberately not part of the test. A hub acknowledges some
+    // commands by PUSHing the state that resulted from them rather than by
+    // sending a SETACK; requiring a SETACK there means timing out on a reply
+    // already in hand. `Appliance.Control.Water` is one such namespace.
     const waiting = this.pending.get(messageId);
-    if (waiting && method !== METHOD.PUSH) {
+    if (waiting && (namespace === waiting.namespace || isErrorNamespace(namespace))) {
       clearTimeout(waiting.timer);
       this.pending.delete(messageId);
 
@@ -213,9 +242,15 @@ export class MerossMqttClient {
         return;
       }
 
-      logger.debug(`Reply ${namespace}: ${JSON.stringify(message.payload)}`);
+      logger.debug(`Reply ${method} ${namespace}: ${JSON.stringify(message.payload)}`);
       waiting.resolve(message.payload ?? {});
-      return;
+
+      // A SETACK is spent once it has resolved the command. A PUSH is not: it
+      // is also the device announcing its new state, and the push path below is
+      // what turns that into a Gladys state. So it keeps going.
+      if (method !== METHOD.PUSH) {
+        return;
+      }
     }
 
     // Unsolicited: a state change pushed by the device.
@@ -227,6 +262,24 @@ export class MerossMqttClient {
         logger.error('Push handler failed', err);
       }
     }
+  }
+
+  /** Remember an inbound message, so a timeout can report what arrived instead. */
+  #recordInbound(namespace, method) {
+    this.inboundSeq += 1;
+    this.inbound.push({ seq: this.inboundSeq, label: `${method} ${namespace}` });
+    if (this.inbound.length > INBOUND_HISTORY) {
+      this.inbound.shift();
+    }
+  }
+
+  /** What arrived on the reply topic since `mark`, phrased for a log line. */
+  #describeSilence(mark) {
+    const since = this.inbound.filter((entry) => entry.seq > mark).map((entry) => entry.label);
+    if (since.length === 0) {
+      return 'Nothing at all arrived on the reply topic while it waited.';
+    }
+    return `Received meanwhile, but matching no pending request: ${since.join(', ')}.`;
   }
 
   /** Disconnect and fail every in-flight request. */

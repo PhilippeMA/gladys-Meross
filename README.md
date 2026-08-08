@@ -84,6 +84,14 @@ silence to anything keyed other than `control`, which is indistinguishable from 
 that does not carry it. With the right shape the cloud serves it like any other namespace,
 so watering uses the normal routing and works on hubs Gladys cannot reach directly.
 
+**A watering SET is acknowledged by a PUSH, not by a SETACK.** The hub answers the command
+with the resulting water state, carrying the `messageId` we sent. A client that identifies
+replies by method waits ten seconds for an ack that is never coming, then reports a failure
+for a command that worked — while the answer sat one branch away, treated as an unsolicited
+event. So a reply here is whatever carries our `messageId` and either our namespace or an
+error namespace; the method is not part of the test. A PUSH that resolves a command is then
+also handled as a push, because it is genuinely both.
+
 `Appliance.Control.WaterEvent` really is unreadable — it is push-only by design, and every
 GET goes unanswered. Schedules are readable through `Appliance.Digest.WaterPlan` (keyed
 `digest`, targeted by `subId`) but `Appliance.Config.WaterPlan` refuses every shape with
