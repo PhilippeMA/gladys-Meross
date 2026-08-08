@@ -26,6 +26,7 @@ import {
   handleSetValue,
   publishDeviceStates,
   shouldPoll,
+  withRequiredBounds,
 } from '../src/devices/index.js';
 import * as plug from '../src/devices/plug.js';
 import * as light from '../src/devices/light.js';
@@ -159,6 +160,67 @@ test('no published device can carry a poll frequency Gladys would reject', () =>
       }
     }
   }
+});
+
+test('every published feature declares min and max', () => {
+  // Gladys stores min/max as NOT NULL: a feature missing either is discovered
+  // fine and then refused at ADD time with
+  // "422 t_device_feature.min cannot be null". Binary features are the trap.
+  const gladys = createFakeGladys();
+  const devices = buildDiscoveredDevices(
+    gladys,
+    [
+      powerPlug(),
+      simplePlug(),
+      powerStrip(),
+      legacyTogglePlug(),
+      colorBulb(),
+      colorStrip(),
+      garageOpener(),
+      smartHub(),
+    ],
+    config,
+  );
+
+  assert.ok(devices.length > 0);
+  for (const device of devices) {
+    for (const f of device.features) {
+      assert.ok(
+        Number.isFinite(f.min),
+        `"${device.name}" / "${f.name}" has no numeric min (${f.category}/${f.type})`,
+      );
+      assert.ok(
+        Number.isFinite(f.max),
+        `"${device.name}" / "${f.name}" has no numeric max (${f.category}/${f.type})`,
+      );
+      assert.ok(f.min < f.max, `"${device.name}" / "${f.name}" has min >= max`);
+    }
+  }
+});
+
+test('binary features are bounded to 0..1', () => {
+  const gladys = createFakeGladys();
+  const [plugDevice] = buildDiscoveredDevices(gladys, [simplePlug()], config);
+  const onOff = feature(plugDevice, 'on-off-0');
+
+  assert.equal(onOff.min, 0);
+  assert.equal(onOff.max, 1);
+});
+
+test('a feature that forgot its bounds is repaired rather than published broken', () => {
+  const repaired = withRequiredBounds({
+    name: 'On/Off',
+    category: 'switch',
+    type: 'binary',
+    external_id: 'x',
+  });
+  assert.equal(repaired.min, 0);
+  assert.equal(repaired.max, 1);
+});
+
+test('a feature that declares its bounds is left untouched', () => {
+  const original = { name: 'Power', category: 'energy-sensor', type: 'power', min: 0, max: 3680 };
+  assert.equal(withRequiredBounds(original), original);
 });
 
 test('a colour bulb exposes brightness, colour and white temperature', () => {

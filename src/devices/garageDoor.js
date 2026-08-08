@@ -43,6 +43,8 @@ export function buildFeatures(device, ids) {
       external_id: ids.feature(buildFeatureKey(FEATURE_KIND.DOOR, channel)),
       category: DEVICE_FEATURE_CATEGORIES.SWITCH,
       type: DEVICE_FEATURE_TYPES.SWITCH.BINARY,
+      min: 0,
+      max: 1,
       read_only: false,
       has_feedback: true,
       keep_history: true,

@@ -49,6 +49,47 @@ export function findKind(device) {
  * hub produces one per sub-device.
  */
 export function gladysDevicesOf(kind, gladys, device, config) {
+  // Both branches funnel through `withRequiredBounds`: it is the single place
+  // that guarantees a published feature can actually be saved by Gladys.
+  return buildRawDevices(kind, gladys, device, config).map((built) => ({
+    ...built,
+    features: built.features.map(withRequiredBounds),
+  }));
+}
+
+/**
+ * Gladys stores `min` and `max` as NOT NULL columns with no default, so a
+ * feature missing either is refused at ADD time with
+ * `422 t_device_feature.min cannot be null` — the device is discovered, then
+ * impossible to add, which is the most confusing failure of all.
+ *
+ * Binary features are the easy trap: their range is so obvious that it feels
+ * redundant to declare it. It is not. Fill it in rather than let the user hit
+ * a 422.
+ */
+export function withRequiredBounds(feature) {
+  if (Number.isFinite(feature.min) && Number.isFinite(feature.max)) {
+    return feature;
+  }
+
+  if (!isBinaryFeature(feature)) {
+    // Not a bug we can fix by guessing: a sensor needs a meaningful range.
+    // Publish it anyway so the rest of the device works, but say so loudly.
+    logger.error(
+      `Feature "${feature.name}" (${feature.category}/${feature.type}) declares no min/max. ` +
+        `Falling back to 0..1 so Gladys accepts it, but that range is almost certainly wrong.`,
+    );
+  }
+
+  return { ...feature, min: feature.min ?? 0, max: feature.max ?? 1 };
+}
+
+/** Binary features have exactly two states, whatever their category. */
+function isBinaryFeature(feature) {
+  return feature.type === 'binary';
+}
+
+function buildRawDevices(kind, gladys, device, config) {
   if (typeof kind.buildGladysDevices === 'function') {
     return kind.buildGladysDevices(gladys, device, config);
   }
