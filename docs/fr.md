@@ -53,6 +53,12 @@ La durée est propre à chaque programmateur : réglez-la sur l'appareil, ou dé
 valeur par défaut pour tous dans la configuration de l'intégration. Elle revient à cette
 valeur par défaut au redémarrage de l'intégration.
 
+**L'arrosage ne fonctionne que sur votre réseau local.** Le hub accepte la commande en direct,
+jamais via les serveurs Meross — la machine qui exécute Gladys doit donc pouvoir joindre
+l'adresse IP de votre hub. Si ce n'est pas le cas, l'interrupteur échoue immédiatement et les
+logs indiquent l'adresse qui n'a pas répondu. **Diagnostiquer mes appareils** affiche
+l'adresse LAN de chaque appareil et le canal utilisé.
+
 Les **programmations** d'arrosage restent dans l'application Meross : le hub n'en autorise ni
 la lecture ni la modification depuis l'extérieur.
 

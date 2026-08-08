@@ -127,6 +127,13 @@ gladys.onAction('diagnose', async () => {
         kind ? `handled as ${kind.KIND}` : 'NOT HANDLED',
       ];
 
+      // The channel matters beyond the badge: some namespaces (watering) exist
+      // ONLY on the LAN, so a device stuck on the cloud cannot use them.
+      const transport = client.getTransportEntries().find((entry) => entry.uuid === device.uuid);
+      parts.push(`LAN address: ${device.ip ?? 'unknown'}`);
+      parts.push(
+        `channel in use: ${device.localOk ? 'local' : 'cloud'}${transport?.degraded ? ' (degraded)' : ''}`,
+      );
       parts.push(`abilities: ${abilities.join(' ') || 'none'}`);
 
       // The raw sub-device state is what decides which features exist and which

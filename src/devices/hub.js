@@ -397,7 +397,10 @@ export async function onSetValue(client, { gladys, device, subDeviceId, kind, va
       const minutes = wateringDuration(sub, config);
 
       requireAbility(device, NAMESPACE.CONTROL_WATER, subDeviceId);
-      await client.request(
+      // LAN only: the hub advertises this namespace but never answers it over
+      // MQTT. The Meross app itself starts a watering with a direct POST to the
+      // hub, and that is the only channel that works.
+      await client.requestLocal(
         device.uuid,
         NAMESPACE.CONTROL_WATER,
         METHOD.SET,

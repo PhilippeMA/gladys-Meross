@@ -68,8 +68,15 @@ per timer, defaulting to the integration-wide setting). The timer never reports 
 is watering, so the switch carries what Gladys commanded and is cleared automatically when
 the duration elapses — otherwise it would stay on forever after one watering.
 
-`Appliance.Control.Water` refuses every GET (`error 5000`), so there is no watering state to
-read back, and `Appliance.Control.WaterEvent` never answers. Schedules
+**`Appliance.Control.Water` is LAN-only.** The hub advertises it but never answers it over
+MQTT — the request simply times out, exactly like `Appliance.Control.WaterEvent`. The Meross
+app starts a watering with a direct `POST http://<hub-ip>/config`, and that is the only
+channel that works, so watering commands are sent with `client.requestLocal()` rather than
+the usual routing. **Gladys must be able to reach the hub's LAN address**; when it cannot,
+the command fails immediately with that explanation instead of hanging for ten seconds.
+
+`Appliance.Control.Water` also refuses every GET (`error 5000`), so there is no watering
+state to read back. Schedules
 (`Digest.WaterPlan`, `Config.WaterPlan`) are equally unreadable and are not exposed.
 
 ## How it works

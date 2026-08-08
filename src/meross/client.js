@@ -343,9 +343,19 @@ export class MerossClient {
     if (device.ip) {
       device.localOk = await isReachable({ ip: device.ip, key: this.session.key });
       if (device.localOk) {
+        logger.info(`${device.name} is reachable on the LAN at ${device.ip}`);
         this.transports.set(device.uuid, { transport: DEVICE_TRANSPORTS.LOCAL });
         return;
       }
+      logger.warn(
+        `${device.name} did not answer on the LAN at ${device.ip}, using the cloud. ` +
+          `Namespaces that only exist locally will not work.`,
+      );
+    } else {
+      logger.warn(
+        `${device.name} disclosed no LAN address, using the cloud. ` +
+          `Namespaces that only exist locally will not work.`,
+      );
     }
 
     device.localOk = false;
@@ -444,6 +454,49 @@ export class MerossClient {
     }
 
     return this.cloudRequest(uuid, namespace, method, payload, { timeoutMs });
+  }
+
+  /**
+   * Force a message through the LAN, never the cloud.
+   *
+   * Some namespaces exist ONLY on the local channel. `Appliance.Control.Water`
+   * is one: over MQTT the hub never answers it (the request just times out),
+   * while a direct POST to the hub is acknowledged immediately — which is
+   * exactly what the Meross app does to start a watering.
+   *
+   * Falling back to the cloud here would be pointless, so a missing or
+   * unreachable LAN address fails fast with an explanation instead of after a
+   * ten-second silence.
+   */
+  async requestLocal(uuid, namespace, method, payload = {}, { timeoutMs } = {}) {
+    const device = this.devices.get(uuid);
+    if (!device) {
+      throw new Error(`Unknown Meross device ${uuid}`);
+    }
+    if (!device.ip) {
+      throw new Error(
+        `${namespace} only works over the local network, but the LAN address of ` +
+          `"${device.name}" is unknown. Check that the hub is online and that Gladys can ` +
+          `reach it directly.`,
+      );
+    }
+
+    try {
+      return await localRequest({
+        ip: device.ip,
+        key: this.session.key,
+        uuid: device.uuid,
+        namespace,
+        method,
+        payload,
+        timeoutMs,
+      });
+    } catch (err) {
+      throw new Error(
+        `${namespace} only works over the local network and ${device.ip} did not answer ` +
+          `(${err.message}). The Gladys container must be able to reach that address.`,
+      );
+    }
   }
 
   /** Force a message through the cloud broker. */

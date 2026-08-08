@@ -49,6 +49,12 @@ clears itself when the watering ends.
 The duration is per timer: set it on the device, or set a default for all of them in the
 integration configuration. It resets to that default when the integration restarts.
 
+**Watering only works over your local network.** The hub accepts the command directly, never
+through the Meross servers — so the machine running Gladys must be able to reach your hub's
+IP address. If it cannot, the switch fails straight away and the logs name the address that
+did not answer. **Diagnose my devices** shows each device's LAN address and the channel it
+is using.
+
 Watering **schedules** stay in the Meross app: the hub does not let anything else read or
 change them.
 

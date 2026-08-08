@@ -326,11 +326,42 @@ function wateringHub() {
   return device;
 }
 
+test('a watering goes over the LAN, never the cloud', async () => {
+  // The hub advertises Appliance.Control.Water but never answers it over MQTT:
+  // the request just times out. Only a direct POST to the hub works, which is
+  // what the Meross app does. Routing it through the normal channel would
+  // silently fall back to the cloud and hang.
+  const device = wateringHub();
+  const client = createCountingClient();
+  const cloud = [];
+  const lan = [];
+  client.request = async (uuid, namespace) => {
+    cloud.push(namespace);
+    return {};
+  };
+  client.requestLocal = async (uuid, namespace) => {
+    lan.push(namespace);
+    return {};
+  };
+
+  await hub.onSetValue(client, {
+    gladys: createFakeGladys(),
+    config: { watering_duration: 15 },
+    device,
+    subDeviceId: '1B0091AFC74E',
+    kind: 'watering',
+    value: 1,
+  });
+
+  assert.deepEqual(lan, ['Appliance.Control.Water']);
+  assert.deepEqual(cloud, [], 'nothing may go through the cloud');
+});
+
 test('starting a watering sends the payload the app sends', async () => {
   const device = wateringHub();
   const client = createCountingClient();
   const sent = [];
-  client.request = async (uuid, namespace, method, payload) => {
+  client.requestLocal = async (uuid, namespace, method, payload) => {
     sent.push({ uuid, namespace, method, payload });
     return {};
   };
@@ -360,7 +391,7 @@ test('stopping a watering uses onoff 2 and omits the duration', async () => {
   const device = wateringHub();
   const client = createCountingClient();
   const sent = [];
-  client.request = async (uuid, namespace, method, payload) => {
+  client.requestLocal = async (uuid, namespace, method, payload) => {
     sent.push(payload);
     return {};
   };
@@ -385,7 +416,7 @@ test('a per-timer duration overrides the integration default', async () => {
   const device = wateringHub();
   const client = createCountingClient();
   const sent = [];
-  client.request = async (uuid, namespace, method, payload) => {
+  client.requestLocal = async (uuid, namespace, method, payload) => {
     sent.push(payload);
     return {};
   };
@@ -417,7 +448,7 @@ test('a per-timer duration overrides the integration default', async () => {
 test('an out-of-range duration is clamped rather than sent as-is', async () => {
   const device = wateringHub();
   const client = createCountingClient();
-  client.request = async () => ({});
+  client.requestLocal = async () => ({});
 
   assert.equal(
     await hub.onSetValue(client, {
