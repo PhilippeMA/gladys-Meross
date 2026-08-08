@@ -669,40 +669,48 @@ export class MerossClient {
   async probeNamespaces(device, namespaces = PROBE_NAMESPACES) {
     const advertised = namespaces.filter((namespace) => namespace in (device.ability ?? {}));
 
-    return Promise.all(
-      advertised.map(async (namespace) => {
-        const attempts = [];
-        const successes = [];
-        const subDeviceIds = [...(device.subDevices?.keys() ?? [])];
+    const results = [];
+    // Deliberately sequential. Probing six namespaces at once means up to thirty
+    // in-flight requests at one small device, and a hub that answers them one by
+    // one reports "no answer at all" for every one of them when they arrive
+    // together — a flood produces a diagnostic of the flood, not of the device.
+    for (const namespace of advertised) {
+      results.push(await this.#probeNamespace(device, namespace));
+    }
+    return results;
+  }
 
-        // A bare `{}` is rarely enough: most namespaces want their own key in
-        // the request too, and answer `error 5000` without it.
-        //
-        // EVERY shape is tried, not just up to the first success: a read with an
-        // empty list is accepted and comes back empty, which tells us the key is
-        // right but nothing about the data. The shape targeting the sub-device by
-        // id is the interesting one, and it comes later.
-        for (const payload of probePayloads(namespace, subDeviceIds)) {
-          try {
-            const reply = await this.request(device.uuid, namespace, METHOD.GET, payload, {
-              timeoutMs: PROBE_TIMEOUT_MS,
-            });
-            successes.push({ request: payload, payload: reply });
-          } catch (err) {
-            attempts.push({ request: payload, error: err.message });
+  async #probeNamespace(device, namespace) {
+    const attempts = [];
+    const successes = [];
+    const subDeviceIds = [...(device.subDevices?.keys() ?? [])];
 
-            // Silence is different from a refusal: a namespace that does not
-            // answer at all will not answer a different payload either, so stop
-            // rather than burn one timeout per remaining shape.
-            if (err.code === TIMEOUT_ERROR_CODE) {
-              return { namespace, attempts, silent: true };
-            }
-          }
+    // A bare `{}` is rarely enough: most namespaces want their own key in the
+    // request too, and answer `error 5000` without it.
+    //
+    // EVERY shape is tried, not just up to the first success: a read with an
+    // empty list is accepted and comes back empty, which tells us the key is
+    // right but nothing about the data. The shape targeting the sub-device by
+    // id is the interesting one, and it comes later.
+    for (const payload of probePayloads(namespace, subDeviceIds)) {
+      try {
+        const reply = await this.request(device.uuid, namespace, METHOD.GET, payload, {
+          timeoutMs: PROBE_TIMEOUT_MS,
+        });
+        successes.push({ request: payload, payload: reply });
+      } catch (err) {
+        attempts.push({ request: payload, error: err.message });
+
+        // Silence is different from a refusal: a namespace that does not answer
+        // at all will not answer a different payload either, so stop rather than
+        // burn one timeout per remaining shape.
+        if (err.code === TIMEOUT_ERROR_CODE) {
+          return { namespace, attempts, silent: true };
         }
+      }
+    }
 
-        return { namespace, successes, attempts };
-      }),
-    );
+    return { namespace, successes, attempts };
   }
 
   /**
@@ -719,23 +727,32 @@ export class MerossClient {
       return [];
     }
 
-    return Promise.all(
-      ports.map(async (port) => {
+    const results = [];
+
+    for (const port of ports) {
+      // With and without the target uuid in the header. The Meross app sends
+      // it on local requests, but the signature does not cover it, so a
+      // firmware that validates the header strictly could reject one and accept
+      // the other — and a status of 470 is exactly the kind of answer that
+      // would come from a header check.
+      for (const withUuid of [true, false]) {
         try {
           const payload = await localRequest({
             ip: device.ip,
             key: this.session?.key,
-            uuid: device.uuid,
+            uuid: withUuid ? device.uuid : undefined,
             namespace: NAMESPACE.SYSTEM_ALL,
             method: METHOD.GET,
             port,
           });
-          return { port, ok: true, answered: Object.keys(payload ?? {}) };
+          results.push({ port, withUuid, ok: true, answered: Object.keys(payload ?? {}) });
         } catch (err) {
-          return { port, ok: false, error: err.message };
+          results.push({ port, withUuid, ok: false, error: err.message });
         }
-      }),
-    );
+      }
+    }
+
+    return results;
   }
 
   /**

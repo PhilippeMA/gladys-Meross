@@ -94,7 +94,13 @@ export async function localRequest({
   }
 
   if (!response.ok) {
-    throw new Error(`Meross LAN HTTP ${response.status} from ${address}`);
+    // Read the body before giving up. Meross firmware answers with non-standard
+    // statuses (470 has been seen on an MSH400) and puts the reason in the body
+    // — usually a normal Meross envelope with an error payload. Throwing on the
+    // status alone discards the only explanation there is.
+    throw new Error(
+      `Meross LAN HTTP ${response.status} from ${address}: ${await readBody(response)}`,
+    );
   }
 
   const body = await response.json();
@@ -117,6 +123,19 @@ export async function localRequest({
   }
 
   return body?.payload ?? {};
+}
+
+/** Whatever a failing response has to say, capped so a log line stays a line. */
+async function readBody(response, limit = 400) {
+  try {
+    const text = (await response.text()).trim();
+    if (!text) {
+      return 'empty body';
+    }
+    return text.length > limit ? `${text.slice(0, limit)}…` : text;
+  } catch (err) {
+    return `unreadable body (${err.message})`;
+  }
 }
 
 /**
@@ -167,7 +186,12 @@ export function describeNetworkError(err) {
     return 'no answer before the timeout: the address is filtered or the device is offline';
   }
 
-  return err?.message ?? 'unknown network error';
+  // A code we do not have a sentence for is still worth far more than the
+  // "fetch failed" wrapper around it — `UND_ERR_SOCKET`, for instance, means
+  // the device accepted the connection and then dropped it, which is a real
+  // finding and reads as nothing at all without the code.
+  const message = err?.message ?? 'unknown network error';
+  return code ? `${message} (${code})` : message;
 }
 
 /**

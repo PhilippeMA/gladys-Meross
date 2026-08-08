@@ -150,7 +150,8 @@ gladys.onAction('diagnose', async () => {
       // perfectly alive, so it looks identical to a dead endpoint.
       for (const local of await client.probeLocalPorts(device)) {
         parts.push(
-          `\n  ! LAN port ${local.port}: ` +
+          `\n  ! LAN port ${local.port}` +
+            `${local.withUuid ? '' : ' (no uuid header)'}: ` +
             (local.ok ? `answered (${local.answered.join(', ') || 'empty'})` : local.error),
         );
       }

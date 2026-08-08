@@ -262,16 +262,25 @@ test('the local probe reports each port separately, signed', async () => {
   try {
     const results = await client.probeLocalPorts(device);
 
+    // Each port, with and without the uuid header: a firmware that validates
+    // the header strictly could accept one and reject the other.
     assert.deepEqual(
-      results.map((r) => `${r.port}:${r.ok}`),
-      ['80:true', '5010:false'],
+      results.map((r) => `${r.port}${r.withUuid ? '+uuid' : ''}:${r.ok}`),
+      ['80+uuid:true', '80:true', '5010+uuid:false', '5010:false'],
     );
-    assert.match(results[1].error, /nothing is listening/);
+    assert.match(results[2].error, /nothing is listening/);
     // Port 80 keeps the bare address; anything else is spelled out.
     assert.deepEqual(
       seen.map((s) => s.url),
-      ['http://192.168.50.24/config', 'http://192.168.50.24:5010/config'],
+      [
+        'http://192.168.50.24/config',
+        'http://192.168.50.24/config',
+        'http://192.168.50.24:5010/config',
+        'http://192.168.50.24:5010/config',
+      ],
     );
+    assert.equal(seen[0].body.header.uuid, 'hub');
+    assert.equal('uuid' in seen[1].body.header, false, 'the second variant omits it');
     // And every probe is signed, which is the entire point.
     for (const { body } of seen) {
       assert.match(body.header.sign, /^[0-9a-f]{32}$/);
@@ -286,4 +295,46 @@ test('the local probe reports each port separately, signed', async () => {
 test('a device with no known address is not probed at all', async () => {
   const client = new MerossClient();
   assert.deepEqual(await client.probeLocalPorts({ uuid: 'x', name: 'n', ip: null }), []);
+});
+
+test('a non-2xx local reply is reported with its body, not just its status', async () => {
+  // An MSH400 answers HTTP 470 on its local endpoint. 470 is not a standard
+  // status and means nothing on its own; whatever the device put in the body is
+  // the only explanation available, and throwing on the status discards it.
+  const client = new MerossClient();
+  client.session = { key: 'k' };
+  const device = { uuid: 'hub', name: 'Smart Hub', ip: '192.168.50.24', ability: {} };
+
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = async () => ({
+    ok: false,
+    status: 470,
+    text: async () =>
+      '{"header":{"namespace":"Appliance.Control.Error"},"payload":{"error":{"code":5001}}}',
+  });
+
+  try {
+    const [result] = await client.probeLocalPorts(device, [5010]);
+    assert.equal(result.ok, false);
+    assert.match(result.error, /HTTP 470/);
+    assert.match(result.error, /5001/, 'the body is what says why');
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
+test('an unreadable or empty body still produces a usable message', async () => {
+  const client = new MerossClient();
+  client.session = { key: 'k' };
+  const device = { uuid: 'hub', name: 'Smart Hub', ip: '10.0.0.1', ability: {} };
+
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = async () => ({ ok: false, status: 470, text: async () => '   ' });
+
+  try {
+    const [result] = await client.probeLocalPorts(device, [80]);
+    assert.match(result.error, /HTTP 470 .*empty body/);
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
 });
