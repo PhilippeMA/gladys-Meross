@@ -204,18 +204,47 @@ test('probing never sends anything but a GET', async () => {
   assert.deepEqual(methods, ['GET']);
 });
 
-test('a namespace that refuses the probe is reported, not thrown', async () => {
+test('a namespace that refuses every shape reports what was tried', async () => {
   const client = createCountingClient();
   const device = smartHub();
   device.ability['Appliance.Control.Water'] = {};
   client.request = async () => {
-    throw new Error('Meross refused the message (Appliance.Hub.Exception): {}');
+    throw new Error('Meross returned error 5000 for Appliance.Control.Water');
   };
 
   const [result] = await client.probeNamespaces(device);
 
   assert.equal(result.namespace, 'Appliance.Control.Water');
-  assert.match(result.error, /Appliance\.Hub\.Exception/);
+  assert.equal(result.payload, undefined);
+  // A bare read plus the namespace's own key as object and as array.
+  assert.deepEqual(
+    result.attempts.map((a) => a.request),
+    [{}, { water: {} }, { water: [] }],
+  );
+  assert.match(result.attempts[0].error, /error 5000/);
+});
+
+test('probing stops at the first shape the device accepts', async () => {
+  // `{}` earns error 5000 on these namespaces; the shape carrying the key works.
+  const client = createCountingClient();
+  const device = smartHub();
+  device.ability['Appliance.Control.Water'] = {};
+
+  const seen = [];
+  client.request = async (uuid, namespace, method, payload) => {
+    seen.push(payload);
+    if (Object.keys(payload).length === 0) {
+      throw new Error('Meross returned error 5000 for Appliance.Control.Water');
+    }
+    return { water: [{ id: 'X', duration: 300 }] };
+  };
+
+  const [result] = await client.probeNamespaces(device);
+
+  assert.deepEqual(result.request, { water: {} });
+  assert.deepEqual(result.payload, { water: [{ id: 'X', duration: 300 }] });
+  // It must not keep probing once something worked.
+  assert.equal(seen.length, 2);
 });
 
 test('a device advertising none of the probed namespaces is left alone', async () => {

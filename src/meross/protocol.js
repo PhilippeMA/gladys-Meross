@@ -104,6 +104,43 @@ export function isErrorNamespace(namespace) {
 }
 
 /**
+ * The OTHER way a device says no: it echoes the namespace you asked for and
+ * puts the failure in the payload — `{ "error": { "code": 5000 } }`.
+ *
+ * This is the sneakier of the two. The reply looks entirely normal: right
+ * namespace, right messageId, valid signature. Only the body says it failed, so
+ * a client that trusts the envelope reports success for a command that did
+ * nothing.
+ *
+ * @returns {{ code: number } | null} the error, or null when the payload is fine
+ */
+export function readPayloadError(payload) {
+  const error = payload?.error;
+  if (error && typeof error === 'object' && error.code !== undefined) {
+    return error;
+  }
+  return null;
+}
+
+/**
+ * Best guess at the payload key a namespace uses, derived from its last
+ * segment. Meross is inconsistent — `ToggleX` carries `togglex` while
+ * `Electricity` carries `electricity` — so both the camelCase and the
+ * all-lowercase spellings are worth trying.
+ *
+ * @returns {string[]} candidate keys, most likely first
+ */
+export function namespacePayloadKeys(namespace) {
+  const last = String(namespace).split('.').pop() ?? '';
+  if (!last) {
+    return [];
+  }
+  const camel = last.charAt(0).toLowerCase() + last.slice(1);
+  const lower = last.toLowerCase();
+  return camel === lower ? [camel] : [camel, lower];
+}
+
+/**
  * Hub sensors report temperatures and humidities in TENTHS of a unit
  * (231 -> 23.1 °C, 546 -> 54.6 %).
  */

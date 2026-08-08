@@ -28,6 +28,7 @@ import {
   generateMessageId,
   isErrorNamespace,
   isSignatureValid,
+  readPayloadError,
   md5,
   METHOD,
 } from './protocol.js';
@@ -194,6 +195,13 @@ export class MerossMqttClient {
             `Meross refused the message (${namespace}): ${JSON.stringify(message.payload)}`,
           ),
         );
+        return;
+      }
+
+      // Same namespace, valid signature, and the failure hidden in the body.
+      const payloadError = readPayloadError(message.payload);
+      if (payloadError) {
+        waiting.reject(new Error(`Meross returned error ${payloadError.code} for ${namespace}`));
         return;
       }
 

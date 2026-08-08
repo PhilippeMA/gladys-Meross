@@ -21,7 +21,13 @@ import { createLogger, DEVICE_TRANSPORTS } from '@gladysassistant/integration-sd
 import * as cloudApi from './cloudApi.js';
 import { MerossMqttClient } from './mqttClient.js';
 import { isReachable, localRequest } from './localClient.js';
-import { HUB_PAYLOAD_KEYS, isHubNamespace, METHOD, NAMESPACE } from './protocol.js';
+import {
+  HUB_PAYLOAD_KEYS,
+  isHubNamespace,
+  METHOD,
+  NAMESPACE,
+  namespacePayloadKeys,
+} from './protocol.js';
 
 const logger = createLogger({ name: 'meross-client' });
 
@@ -56,6 +62,25 @@ export const PROBE_NAMESPACES = [
   'Appliance.Config.WaterPlan',
   'Appliance.Control.Sensor.LatestX',
 ];
+
+/**
+ * Probes must not stall the diagnostic: a namespace that ignores us costs one
+ * timeout per shape tried, and there are several shapes.
+ */
+const PROBE_TIMEOUT_MS = 6000;
+
+/**
+ * Request shapes to try when reading an undocumented namespace, most likely
+ * first: a bare read, then the namespace's own key as an object, then as an
+ * array (hub-style namespaces answer lists).
+ */
+export function probePayloads(namespace) {
+  const payloads = [{}];
+  for (const key of namespacePayloadKeys(namespace)) {
+    payloads.push({ [key]: {} }, { [key]: [] });
+  }
+  return payloads;
+}
 
 export class MerossClient {
   /**
@@ -378,7 +403,7 @@ export class MerossClient {
    * that very moment (device rebooted, DHCP moved it), we do NOT fail the
    * user's command: we retry over the cloud and downgrade the badge.
    */
-  async request(uuid, namespace, method, payload = {}) {
+  async request(uuid, namespace, method, payload = {}, { timeoutMs } = {}) {
     const device = this.devices.get(uuid);
     if (!device) {
       throw new Error(`Unknown Meross device ${uuid}`);
@@ -392,6 +417,7 @@ export class MerossClient {
           namespace,
           method,
           payload,
+          timeoutMs,
         });
       } catch (err) {
         logger.warn(`LAN call to ${device.name} failed, falling back to the cloud`, err);
@@ -407,15 +433,15 @@ export class MerossClient {
       }
     }
 
-    return this.cloudRequest(uuid, namespace, method, payload);
+    return this.cloudRequest(uuid, namespace, method, payload, { timeoutMs });
   }
 
   /** Force a message through the cloud broker. */
-  async cloudRequest(uuid, namespace, method, payload = {}) {
+  async cloudRequest(uuid, namespace, method, payload = {}, { timeoutMs } = {}) {
     if (!this.mqtt?.connected) {
       throw new Error('Not connected to the Meross broker');
     }
-    return this.mqtt.request(uuid, namespace, method, payload);
+    return this.mqtt.request(uuid, namespace, method, payload, timeoutMs);
   }
 
   /** Read the full state of a device and cache it. */
@@ -540,12 +566,23 @@ export class MerossClient {
 
     return Promise.all(
       advertised.map(async (namespace) => {
-        try {
-          const payload = await this.request(device.uuid, namespace, METHOD.GET, {});
-          return { namespace, payload };
-        } catch (err) {
-          return { namespace, error: err.message };
+        const attempts = [];
+
+        // A bare `{}` is rarely enough: most namespaces want their own key in
+        // the request too, and answer `error 5000` without it. Try the
+        // conventional shapes and report the first one that works.
+        for (const payload of probePayloads(namespace)) {
+          try {
+            const reply = await this.request(device.uuid, namespace, METHOD.GET, payload, {
+              timeoutMs: PROBE_TIMEOUT_MS,
+            });
+            return { namespace, request: payload, payload: reply, attempts };
+          } catch (err) {
+            attempts.push({ request: payload, error: err.message });
+          }
         }
+
+        return { namespace, attempts };
       }),
     );
   }

@@ -18,7 +18,9 @@ import {
   md5,
   METHOD,
   NAMESPACE,
+  namespacePayloadKeys,
   normalizeElectricity,
+  readPayloadError,
   rgbToInt,
   signMessage,
   toRgbInt,
@@ -134,6 +136,32 @@ test('a refusal namespace is recognised as an error, not as a reply', () => {
   assert.equal(isErrorNamespace('Appliance.Control.ToggleX'), false);
   assert.equal(isErrorNamespace(undefined), false);
   assert.equal(isErrorNamespace(null), false);
+});
+
+test('an error hidden in the payload is detected', () => {
+  // The sneakier refusal: right namespace, valid signature, and
+  // `{"error":{"code":5000}}` in the body. Trusting the envelope alone reports
+  // success for a command that did nothing.
+  assert.deepEqual(readPayloadError({ error: { code: 5000 } }), { code: 5000 });
+  assert.deepEqual(readPayloadError({ error: { code: 0 } }), { code: 0 });
+
+  assert.equal(readPayloadError({ all: { digest: {} } }), null);
+  assert.equal(readPayloadError({}), null);
+  assert.equal(readPayloadError(undefined), null);
+  // An `error` without a code is not the documented shape: do not guess.
+  assert.equal(readPayloadError({ error: 'oops' }), null);
+  assert.equal(readPayloadError({ error: {} }), null);
+});
+
+test('payload keys are derived from the last namespace segment', () => {
+  assert.deepEqual(namespacePayloadKeys('Appliance.Control.Water'), ['water']);
+  // Meross spells some keys camelCase and others flat, so offer both.
+  assert.deepEqual(namespacePayloadKeys('Appliance.Digest.WaterPlan'), ['waterPlan', 'waterplan']);
+  assert.deepEqual(namespacePayloadKeys('Appliance.Control.ToggleX'), ['toggleX', 'togglex']);
+  assert.deepEqual(namespacePayloadKeys('Appliance.Control.Sensor.LatestX'), [
+    'latestX',
+    'latestx',
+  ]);
 });
 
 test('light capacity bits are the Meross ones', () => {

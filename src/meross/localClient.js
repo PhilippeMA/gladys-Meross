@@ -21,7 +21,7 @@
 // -----------------------------------------------------------------------------
 
 import { createLogger } from '@gladysassistant/integration-sdk';
-import { buildMessage, isErrorNamespace } from './protocol.js';
+import { buildMessage, isErrorNamespace, readPayloadError } from './protocol.js';
 
 const logger = createLogger({ name: 'meross-local' });
 
@@ -80,6 +80,12 @@ export async function localRequest({
       `Meross device ${ip} refused the message (${body.header.namespace}): ` +
         JSON.stringify(body.payload),
     );
+  }
+
+  // A refusal can also hide in the body while the envelope looks perfect.
+  const payloadError = readPayloadError(body?.payload);
+  if (payloadError) {
+    throw new Error(`Meross device ${ip} returned error ${payloadError.code} for ${namespace}`);
   }
 
   return body?.payload ?? {};
