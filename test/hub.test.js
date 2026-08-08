@@ -166,6 +166,66 @@ test('a failed hub read does not wedge the coalescing guard', async () => {
   assert.equal(device.subDeviceRefresh.promise, undefined);
 });
 
+// --- Probing unmodelled namespaces -------------------------------------------
+
+test('probing only reads namespaces the device advertises', async () => {
+  const client = createCountingClient();
+  const device = smartHub();
+  // A sprinkler hub: it advertises the watering family.
+  device.ability['Appliance.Control.Water'] = {};
+  device.ability['Appliance.Digest.WaterPlan'] = {};
+
+  const results = await client.probeNamespaces(device);
+
+  assert.deepEqual(results.map((r) => r.namespace).sort(), [
+    'Appliance.Control.Water',
+    'Appliance.Digest.WaterPlan',
+  ]);
+  // Nothing outside the advertised set was asked for.
+  for (const namespace of client.reads) {
+    assert.ok(namespace in device.ability);
+  }
+});
+
+test('probing never sends anything but a GET', async () => {
+  // Guessing a SET on a watering system could rewrite a schedule or open a
+  // valve, so the probe must stay strictly read-only.
+  const client = createCountingClient();
+  const device = smartHub();
+  device.ability['Appliance.Control.Water'] = {};
+
+  const methods = [];
+  client.request = async (uuid, namespace, method) => {
+    methods.push(method);
+    return {};
+  };
+
+  await client.probeNamespaces(device);
+  assert.deepEqual(methods, ['GET']);
+});
+
+test('a namespace that refuses the probe is reported, not thrown', async () => {
+  const client = createCountingClient();
+  const device = smartHub();
+  device.ability['Appliance.Control.Water'] = {};
+  client.request = async () => {
+    throw new Error('Meross refused the message (Appliance.Hub.Exception): {}');
+  };
+
+  const [result] = await client.probeNamespaces(device);
+
+  assert.equal(result.namespace, 'Appliance.Control.Water');
+  assert.match(result.error, /Appliance\.Hub\.Exception/);
+});
+
+test('a device advertising none of the probed namespaces is left alone', async () => {
+  const client = createCountingClient();
+  const results = await client.probeNamespaces(powerPlug());
+
+  assert.deepEqual(results, []);
+  assert.equal(client.reads.length, 0);
+});
+
 // --- Refusing to send what the hub cannot do ---------------------------------
 
 test('a command needing a namespace the hub lacks fails with a useful message', async () => {

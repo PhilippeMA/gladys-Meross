@@ -107,28 +107,39 @@ gladys.onAction('diagnose', async () => {
     throw new Error('Not connected to Meross: check the configuration and the logs.');
   }
 
-  const lines = client.getDevices().map((device) => {
-    const kind = findKind(device);
-    const abilities = Object.keys(device.ability ?? {});
-    const parts = [
-      `${device.name} (${device.type})`,
-      device.online ? 'online' : 'offline',
-      kind ? `handled as ${kind.KIND}` : 'NOT HANDLED',
-    ];
+  const lines = await Promise.all(
+    client.getDevices().map(async (device) => {
+      const kind = findKind(device);
+      const abilities = Object.keys(device.ability ?? {});
+      const parts = [
+        `${device.name} (${device.type})`,
+        device.online ? 'online' : 'offline',
+        kind ? `handled as ${kind.KIND}` : 'NOT HANDLED',
+      ];
 
-    parts.push(`abilities: ${abilities.join(' ') || 'none'}`);
+      parts.push(`abilities: ${abilities.join(' ') || 'none'}`);
 
-    // The raw sub-device state is what decides which features exist and which
-    // namespace can drive them, so print it verbatim rather than summarised.
-    for (const sub of device.subDevices?.values() ?? []) {
-      parts.push(
-        `\n  · ${sub.name} (${sub.type || 'unknown type'}, id ${sub.id}): ` +
-          JSON.stringify(sub.state ?? {}),
-      );
-    }
+      // The raw sub-device state is what decides which features exist and which
+      // namespace can drive them, so print it verbatim rather than summarised.
+      for (const sub of device.subDevices?.values() ?? []) {
+        parts.push(
+          `\n  · ${sub.name} (${sub.type || 'unknown type'}, id ${sub.id}): ` +
+            JSON.stringify(sub.state ?? {}),
+        );
+      }
 
-    return parts.join(' — ');
-  });
+      // Read (never write) the namespaces we cannot model yet: their content is
+      // what a future version needs in order to support the device properly.
+      for (const probe of await client.probeNamespaces(device)) {
+        parts.push(
+          `\n  ? ${probe.namespace}: ` +
+            (probe.error ? `refused — ${probe.error}` : JSON.stringify(probe.payload)),
+        );
+      }
+
+      return parts.join(' — ');
+    }),
+  );
 
   const report = lines.join('\n') || 'No device on this Meross account.';
   logger.info(`Diagnostic report:\n${report}`);

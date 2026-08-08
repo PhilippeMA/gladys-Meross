@@ -40,6 +40,23 @@ export const SESSION_KEYS = {
   MQTT_DOMAIN: 'meross_mqtt_domain',
 };
 
+/**
+ * Namespaces worth reading when a device is not fully supported yet.
+ *
+ * The watering family belongs to the sprinkler hubs (MSH400/MSH450 driving
+ * MST100 timers): a watering timer is not a plain relay, so its `togglex` alone
+ * does not start a watering. These namespaces are where its real model lives,
+ * and none of them is publicly documented — reading them is how support gets
+ * written.
+ */
+export const PROBE_NAMESPACES = [
+  'Appliance.Control.Water',
+  'Appliance.Control.WaterEvent',
+  'Appliance.Digest.WaterPlan',
+  'Appliance.Config.WaterPlan',
+  'Appliance.Control.Sensor.LatestX',
+];
+
 export class MerossClient {
   /**
    * @param {object} options
@@ -506,6 +523,31 @@ export class MerossClient {
     }
 
     return device.subDevices;
+  }
+
+  /**
+   * READ namespaces this integration does not model yet, to find out what they
+   * contain. Diagnostic only, and deliberately GET-only: a GET has no side
+   * effect, where guessing a SET payload on someone's watering system could
+   * rewrite their schedule or open a valve.
+   *
+   * Only namespaces the device actually advertises are probed; a refusal is
+   * captured as text rather than thrown, since "this namespace rejects an
+   * empty GET" is itself a useful finding.
+   */
+  async probeNamespaces(device, namespaces = PROBE_NAMESPACES) {
+    const advertised = namespaces.filter((namespace) => namespace in (device.ability ?? {}));
+
+    return Promise.all(
+      advertised.map(async (namespace) => {
+        try {
+          const payload = await this.request(device.uuid, namespace, METHOD.GET, {});
+          return { namespace, payload };
+        } catch (err) {
+          return { namespace, error: err.message };
+        }
+      }),
+    );
   }
 
   /** Read the instantaneous electricity measurement of a channel. */
