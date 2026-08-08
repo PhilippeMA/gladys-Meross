@@ -50,13 +50,14 @@ seul — exactement comme le bouton « arroser maintenant » de l'application Me
 pour arrêter avant la fin. L'interrupteur se remet à zéro quand l'arrosage se termine.
 
 La durée est propre à chaque programmateur : réglez-la sur l'appareil, ou définissez une
-valeur par défaut pour tous dans la configuration de l'intégration. Elle revient à cette
-valeur par défaut au redémarrage de l'intégration.
+valeur par défaut pour tous dans la configuration de l'intégration. Gladys lit la durée que
+le programmateur a lui-même mémorisée, elle survit donc à un redémarrage.
 
-**L'arrosage ne fonctionne que sur votre réseau local.** Le hub accepte la commande en direct,
-jamais via les serveurs Meross — la machine qui exécute Gladys doit donc pouvoir joindre
-l'adresse IP de votre hub. Si ce n'est pas le cas, l'interrupteur échoue immédiatement et les
-logs indiquent l'adresse qui n'a pas répondu. **Diagnostiquer mes appareils** affiche
+**L'arrosage ne fonctionne que sur votre réseau local** (firmware MSH400). Le hub reçoit bien
+la commande envoyée via les serveurs Meross, mais l'ignore sans répondre ; seule une commande
+envoyée en direct est exécutée. La machine qui exécute Gladys doit donc pouvoir joindre
+l'adresse IP de votre hub. Si ce n'est pas le cas, l'interrupteur échoue et le message
+d'erreur nomme les deux canaux et l'adresse qui n'a pas répondu. **Diagnostiquer mes appareils** affiche
 l'adresse LAN de chaque appareil et le canal utilisé.
 
 Les **programmations** d'arrosage restent dans l'application Meross : le hub n'en autorise ni
@@ -142,6 +143,12 @@ l'intégration a su le traiter. S'il s'agit d'un capteur censé être derrière 
 qu'il est bien appairé à ce hub dans l'application Meross. L'intégration écrit également une
 ligne de log pour chaque appareil ignoré, en précisant ce qu'elle a vu.
 
+**L'arrosage ne démarre pas et Gladys parle des deux canaux** — sur le firmware du MSH400,
+une commande d'arrosage n'est acceptée que par le réseau local : le hub reçoit la commande
+par le cloud et l'ignore sans un mot. Gladys tente le cloud, puis l'adresse locale, et
+l'erreur nomme les deux échecs. Il faut donc que la machine qui exécute Gladys puisse
+joindre le hub directement — voir le point suivant.
+
 **L'adresse locale de mon appareil ne répond pas** — l'intégration bascule sur le cloud et
 le signale dans les logs, avec la raison :
 
@@ -158,9 +165,8 @@ curl -m 3 -X POST http://<ip-de-l-appareil>/config -d '{}'
 ```
 
 Toute réponse autre qu'une erreur de connexion signifie que l'appareil est joignable. Sinon,
-la correction est côté réseau. **Ce n'est pas bloquant** : toutes les fonctions de
-l'intégration, arrosage compris, passent aussi par le cloud — seul le temps de réponse en
-souffre.
+la correction est côté réseau. La lecture des états et la plupart des commandes continuent
+de fonctionner par le cloud ; **l'arrosage, lui, exige ce canal local** sur les hubs MSH400.
 
 **Rien ne fonctionne et je veux savoir pourquoi** — l'intégration journalise tout ce qu'elle
 fait. Ouvrez les logs de l'intégration depuis l'interface Gladys (ou `docker logs` sur

@@ -202,7 +202,7 @@ gladys.onAction('test_watering', async () => {
 
       for (const result of await client.probeWateringSet(device, sub.id, { durationSeconds })) {
         lines.push(
-          `  ${JSON.stringify(result.request)} -> ` +
+          `  ${result.method} ${JSON.stringify(result.request)} -> ` +
             (result.error
               ? `FAILED: ${result.error}`
               : `ANSWERED: ${JSON.stringify(result.payload)}`),

@@ -79,18 +79,35 @@ The switch is also cleared by a local timer when the duration elapses. That is n
 authority — the next poll is — it just spares the user a switch left visibly on for up to a
 minute after the water stopped.
 
-**This namespace looked LAN-only for a while, and it is not.** Over MQTT it answers with
-silence to anything keyed other than `control`, which is indistinguishable from a transport
-that does not carry it. With the right shape the cloud serves it like any other namespace,
-so watering uses the normal routing and works on hubs Gladys cannot reach directly.
+**On the MSH400 firmware, a watering SET only works over the LAN** — and the cloud does not
+say so. Measured, not assumed:
 
-**A watering SET is acknowledged by a PUSH, not by a SETACK.** The hub answers the command
-with the resulting water state, carrying the `messageId` we sent. A client that identifies
-replies by method waits ten seconds for an ack that is never coming, then reports a failure
-for a command that worked — while the answer sat one branch away, treated as an unsolicited
-event. So a reply here is whatever carries our `messageId` and either our namespace or an
-error namespace; the method is not part of the test. A PUSH that resolves a command is then
-also handled as a push, because it is genuinely both.
+| over the cloud                     | answer         |
+| ---------------------------------- | -------------- |
+| `GET {"control":[]}`               | the full state |
+| `SET {"control":{…}}` (object)     | `error 5000`   |
+| `SET {"control":[{…}]}` (list, ×5) | nothing at all |
+| the same list over the LAN         | acted on       |
+
+The refusal of the object form is the informative one: the hub parsed the message, rejected
+the shape and replied, so SET on this namespace **is** dispatched over MQTT. A well-formed
+list is then swallowed in silence. There is no payload to fix — five shapes, including the
+one the Meross app sends and the one meross_lan sends, all met the same silence.
+
+So the command tries the normal routing first (a hub that honours the cloud needs nothing
+else), and on silence falls back to a direct POST to the hub — even when the start-up
+reachability probe said the address was unreachable, since that probe is one packet and a
+command the user is waiting on deserves a real attempt. When both refuse, the error names
+both failures and the address to fix. **Gladys must be able to reach the hub on the LAN for
+watering to work on this hardware.**
+
+**A reply is identified by its `messageId`, never by its method.** Meross devices answer some
+commands with a PUSH of the resulting state rather than a `SETACK`, so a client that requires
+an ack waits out its full timeout on an answer already in hand, then reports a failure for a
+command that worked. Here a reply is whatever carries the `messageId` we sent and either our
+namespace or an error namespace — `krahabb/meross_lan` matches the same way. A PUSH that
+resolves a command then continues through the push path as well, because it is genuinely both
+an answer and a state announcement.
 
 `Appliance.Control.WaterEvent` really is unreadable — it is push-only by design, and every
 GET goes unanswered. Schedules are readable through `Appliance.Digest.WaterPlan` (keyed

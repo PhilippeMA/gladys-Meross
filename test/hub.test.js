@@ -13,6 +13,7 @@ import {
   wateringStopShapes,
 } from '../src/meross/client.js';
 import { HUB_PAYLOAD_KEYS, NAMESPACE, WATER_ONOFF } from '../src/meross/protocol.js';
+import { TIMEOUT_ERROR_CODE } from '../src/meross/mqttClient.js';
 import { parseDeviceExternalId, subDevicePlatformId } from '../src/devices/featureIds.js';
 import * as hub from '../src/devices/hub.js';
 import { publishDeviceStates } from '../src/devices/index.js';
@@ -230,13 +231,14 @@ test('the watering SET probe can only ever stop, never start', async () => {
   await client.probeWateringSet(device, '1B0091AFC74E', { durationSeconds: 900 });
 
   assert.ok(sent.length > 0);
-  for (const { namespace, method, payload } of sent) {
+  for (const { namespace, payload } of sent) {
     assert.equal(namespace, 'Appliance.Control.Water');
-    assert.equal(method, 'SET');
     const entries = Array.isArray(payload.control) ? payload.control : [payload.control];
     for (const entry of entries) {
       assert.equal(entry.onoff, WATER_ONOFF.STOP, `${JSON.stringify(entry)} must be a stop`);
-      assert.equal(entry.subId, '1B0091AFC74E');
+      // Whatever key names the sub-device, the probe must stay on the one it
+      // was pointed at rather than addressing the whole hub.
+      assert.equal(entry.subId ?? entry.id, '1B0091AFC74E');
     }
   }
 });
@@ -572,6 +574,106 @@ test('the watering switch reflects the pushed state, not what we asked for', asy
   await publishDeviceStates(gladys, device);
   states = Object.fromEntries(gladys.published.map((p) => [p.featureExternalId, p.state]));
   assert.equal(states[`meross:${device.uuid}-1B0091AFC74E:watering-0`], 0);
+});
+
+// --- Watering: which channel the hub will actually act on --------------------
+
+function timeoutError() {
+  const err = new Error('did not answer Appliance.Control.Water in time');
+  err.code = TIMEOUT_ERROR_CODE;
+  return err;
+}
+
+test('a watering the cloud swallows is retried on the LAN', async () => {
+  // Confirmed against an MSH400: the hub answers a GET over the cloud, answers
+  // a malformed SET with `error 5000` — so the namespace is dispatched — and
+  // swallows a well-formed SET without a word. The same message over the LAN
+  // is acted on. Giving up at the timeout would strand every hub like it.
+  const device = wateringHub();
+  const client = createCountingClient();
+  const lan = [];
+  client.request = async () => {
+    throw timeoutError();
+  };
+  client.requestLocal = async (uuid, namespace, method, payload) => {
+    lan.push({ namespace, method, payload });
+    return {};
+  };
+
+  const applied = await hub.onSetValue(client, {
+    gladys: createFakeGladys(),
+    config: { watering_duration: 15 },
+    device,
+    subDeviceId: '1B0091AFC74E',
+    kind: 'watering',
+    value: 1,
+  });
+
+  assert.equal(applied, 1);
+  assert.equal(lan.length, 1);
+  assert.deepEqual(lan[0].payload, {
+    control: [{ channel: 0, dura: 900, onoff: 1, subId: '1B0091AFC74E' }],
+  });
+});
+
+test('a refusal is reported, not retried on the LAN', async () => {
+  // Only silence justifies the second attempt. A hub that answered `error 5000`
+  // has understood the message and rejected it, and sending it again over
+  // another pipe is noise.
+  const device = wateringHub();
+  const client = createCountingClient();
+  let lanCalls = 0;
+  client.request = async () => {
+    throw new Error('Meross returned error 5000 for Appliance.Control.Water');
+  };
+  client.requestLocal = async () => {
+    lanCalls += 1;
+    return {};
+  };
+
+  await assert.rejects(
+    () =>
+      hub.onSetValue(client, {
+        gladys: createFakeGladys(),
+        config: {},
+        device,
+        subDeviceId: '1B0091AFC74E',
+        kind: 'watering',
+        value: 1,
+      }),
+    /error 5000/,
+  );
+  assert.equal(lanCalls, 0);
+});
+
+test('when neither channel works the error names both failures', async () => {
+  // "Watering does not work" is not actionable. "No route to 192.168.50.24" is.
+  const device = wateringHub();
+  const client = createCountingClient();
+  client.request = async () => {
+    throw timeoutError();
+  };
+  client.requestLocal = async () => {
+    throw new Error('192.168.50.24 did not answer (no route to the device (EHOSTUNREACH))');
+  };
+
+  await assert.rejects(
+    () =>
+      hub.onSetValue(client, {
+        gladys: createFakeGladys(),
+        config: {},
+        device,
+        subDeviceId: '1B0091AFC74E',
+        kind: 'watering',
+        value: 1,
+      }),
+    (err) => {
+      assert.match(err.message, /stayed silent/, 'the cloud failure is named');
+      assert.match(err.message, /192\.168\.50\.24/, 'and so is the address that failed');
+      assert.match(err.message, /EHOSTUNREACH/, 'with the reason it failed');
+      return true;
+    },
+  );
 });
 
 test('the duration comes from the timer itself before the config default', async () => {

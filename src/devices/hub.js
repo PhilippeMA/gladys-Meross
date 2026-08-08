@@ -34,6 +34,7 @@ import {
   toDeciUnit,
   WATER_ONOFF,
 } from '../meross/protocol.js';
+import { TIMEOUT_ERROR_CODE } from '../meross/mqttClient.js';
 import {
   normalizePollFrequency,
   normalizeWateringDuration,
@@ -411,14 +412,9 @@ export async function onSetValue(client, { gladys, device, subDeviceId, kind, va
       const minutes = wateringDuration(sub, config);
 
       requireAbility(device, NAMESPACE.CONTROL_WATER, subDeviceId);
-      // Normal routing — LAN when it answers, cloud otherwise. This namespace
-      // looked LAN-only for a while because it kept timing out over MQTT, but
-      // the cause was the payload shape: it is keyed `control` and targets the
-      // sub-device by `subId`, and anything else is answered with silence.
-      await client.request(
-        device.uuid,
-        NAMESPACE.CONTROL_WATER,
-        METHOD.SET,
+      await sendWateringCommand(
+        client,
+        device,
         buildWaterControlPayload({
           subId: subDeviceId,
           durationSeconds: minutes * 60,
@@ -470,6 +466,51 @@ export async function onSetValue(client, { gladys, device, subDeviceId, kind, va
 
     default:
       throw new Error(`Feature ${kind} is read-only on sub-device ${subDeviceId}`);
+  }
+}
+
+/**
+ * Send a watering command, over whichever channel the hub will act on.
+ *
+ * `Appliance.Control.Water` is not evenly served. On the MSH400 firmware it
+ * answers a GET over the cloud, and answers a malformed SET there with
+ * `error 5000` — so the namespace IS dispatched — yet a well-formed SET, in the
+ * exact shape the Meross app sends, is swallowed without a word. The same
+ * message over the LAN is acted on immediately.
+ *
+ * "Swallowed" is a trait of one firmware, not a rule, so the normal routing
+ * still gets the first go: on a hub that honours the cloud, nothing more is
+ * needed. When it stays silent, the LAN is tried even if the start-up probe
+ * said the address was unreachable — that probe is one packet, and a command
+ * the user is waiting on deserves a real attempt.
+ *
+ * If both refuse, the error names both failures. A user cannot act on
+ * "watering does not work"; they can act on "no route to 192.168.50.24".
+ */
+async function sendWateringCommand(client, device, payload) {
+  try {
+    return await client.request(device.uuid, NAMESPACE.CONTROL_WATER, METHOD.SET, payload);
+  } catch (cloudError) {
+    if (cloudError.code !== TIMEOUT_ERROR_CODE) {
+      throw cloudError;
+    }
+
+    logger.warn(
+      `${device.name} ignored the watering command over the cloud, trying the LAN at ` +
+        `${device.ip ?? 'an unknown address'}`,
+    );
+
+    try {
+      return await client.requestLocal(device.uuid, NAMESPACE.CONTROL_WATER, METHOD.SET, payload);
+    } catch (localError) {
+      throw new Error(
+        `Hub "${device.name}" accepted the watering command on neither channel. Over the ` +
+          `cloud it stayed silent; on the local network, ${localError.message}. This hub ` +
+          `firmware only acts on watering commands sent directly to it, so the machine ` +
+          `running Gladys must be able to reach the hub's address.`,
+        { cause: localError },
+      );
+    }
   }
 }
 

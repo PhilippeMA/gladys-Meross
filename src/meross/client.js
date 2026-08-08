@@ -106,14 +106,26 @@ export function probePayloads(namespace, subDeviceIds = []) {
 export function wateringStopShapes(subId, durationSeconds = 900) {
   const base = { subId, channel: 0, onoff: WATER_ONOFF.STOP };
   return [
-    // What meross_lan sends, and the only shape confirmed against hardware.
-    { control: [base] },
+    // What meross_lan sends, and the shape confirmed against hardware on the LAN.
+    { method: METHOD.SET, payload: { control: [base] } },
     // Ours: same, plus the duration the Meross app includes.
-    { control: [{ ...base, dura: Math.round(durationSeconds) }] },
+    { method: METHOD.SET, payload: { control: [{ ...base, dura: Math.round(durationSeconds) }] } },
     // Echoing the exact shape the device reports its own state in.
-    { control: [{ ...base, lmTime: 0 }] },
+    { method: METHOD.SET, payload: { control: [{ ...base, lmTime: 0 }] } },
     // A single object rather than a list, in case SET is indexed differently.
-    { control: base },
+    // This one is answered — with `error 5000` — which is how we know the hub
+    // does dispatch SET on this namespace over the cloud at all.
+    { method: METHOD.SET, payload: { control: base } },
+    // Without `channel`: the sub-device is already named by `subId`.
+    { method: METHOD.SET, payload: { control: [{ subId, onoff: WATER_ONOFF.STOP }] } },
+    // Keyed `id`, the way every `Appliance.Hub.*` namespace names a sub-device.
+    {
+      method: METHOD.SET,
+      payload: { control: [{ id: subId, channel: 0, onoff: WATER_ONOFF.STOP }] },
+    },
+    // As a PUSH: the namespace declares that method too, and a firmware that
+    // ignores a SET may still act on a PUSH.
+    { method: METHOD.PUSH, payload: { control: [base] } },
   ];
 }
 
@@ -480,6 +492,39 @@ export class MerossClient {
     return this.cloudRequest(uuid, namespace, method, payload, { timeoutMs });
   }
 
+  /**
+   * Force a message through the LAN, never the cloud.
+   *
+   * Used as a last resort for a namespace the cloud accepted and then ignored,
+   * so it deliberately ignores `localOk`: that flag records one probe at
+   * start-up, and a command worth this fallback is worth one real attempt.
+   * The error names the address and the reason, which is the whole point —
+   * "watering does not work" is not actionable, "no route to 192.168.50.24" is.
+   */
+  async requestLocal(uuid, namespace, method, payload = {}, { timeoutMs } = {}) {
+    const device = this.devices.get(uuid);
+    if (!device) {
+      throw new Error(`Unknown Meross device ${uuid}`);
+    }
+    if (!device.ip) {
+      throw new Error(`the LAN address of "${device.name}" is unknown`);
+    }
+
+    try {
+      return await localRequest({
+        ip: device.ip,
+        key: this.session.key,
+        uuid: device.uuid,
+        namespace,
+        method,
+        payload,
+        timeoutMs,
+      });
+    } catch (err) {
+      throw new Error(`${device.ip} did not answer (${err.message})`, { cause: err });
+    }
+  }
+
   /** Force a message through the cloud broker. */
   async cloudRequest(uuid, namespace, method, payload = {}, { timeoutMs } = {}) {
     if (!this.mqtt?.connected) {
@@ -670,18 +715,14 @@ export class MerossClient {
   async probeWateringSet(device, subDeviceId, { durationSeconds = 900 } = {}) {
     const results = [];
 
-    for (const payload of wateringStopShapes(subDeviceId, durationSeconds)) {
+    for (const { method, payload } of wateringStopShapes(subDeviceId, durationSeconds)) {
       try {
-        const reply = await this.request(
-          device.uuid,
-          NAMESPACE.CONTROL_WATER,
-          METHOD.SET,
-          payload,
-          { timeoutMs: PROBE_TIMEOUT_MS },
-        );
-        results.push({ request: payload, payload: reply });
+        const reply = await this.request(device.uuid, NAMESPACE.CONTROL_WATER, method, payload, {
+          timeoutMs: PROBE_TIMEOUT_MS,
+        });
+        results.push({ method, request: payload, payload: reply });
       } catch (err) {
-        results.push({ request: payload, error: err.message });
+        results.push({ method, request: payload, error: err.message });
       }
     }
 
