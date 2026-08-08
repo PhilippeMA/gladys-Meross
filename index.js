@@ -116,14 +116,16 @@ gladys.onAction('diagnose', async () => {
       kind ? `handled as ${kind.KIND}` : 'NOT HANDLED',
     ];
 
-    if (device.subDevices?.size > 0) {
+    parts.push(`abilities: ${abilities.join(' ') || 'none'}`);
+
+    // The raw sub-device state is what decides which features exist and which
+    // namespace can drive them, so print it verbatim rather than summarised.
+    for (const sub of device.subDevices?.values() ?? []) {
       parts.push(
-        `sub-devices: ${[...device.subDevices.values()]
-          .map((sub) => `${sub.name}/${sub.type || '?'}`)
-          .join(', ')}`,
+        `\n  · ${sub.name} (${sub.type || 'unknown type'}, id ${sub.id}): ` +
+          JSON.stringify(sub.state ?? {}),
       );
     }
-    parts.push(`abilities: ${abilities.join(' ') || 'none'}`);
 
     return parts.join(' — ');
   });

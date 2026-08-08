@@ -21,7 +21,7 @@
 // -----------------------------------------------------------------------------
 
 import { createLogger } from '@gladysassistant/integration-sdk';
-import { buildMessage } from './protocol.js';
+import { buildMessage, isErrorNamespace } from './protocol.js';
 
 const logger = createLogger({ name: 'meross-local' });
 
@@ -73,10 +73,13 @@ export async function localRequest({
 
   const body = await response.json();
 
-  // A device that refuses the message answers with an Error namespace rather
+  // A device that refuses the message answers with an error namespace rather
   // than an HTTP status — most often a signature it does not accept.
-  if (body?.header?.namespace === 'Appliance.Control.Error') {
-    throw new Error(`Meross device ${ip} refused the message: ${JSON.stringify(body.payload)}`);
+  if (isErrorNamespace(body?.header?.namespace)) {
+    throw new Error(
+      `Meross device ${ip} refused the message (${body.header.namespace}): ` +
+        JSON.stringify(body.payload),
+    );
   }
 
   return body?.payload ?? {};

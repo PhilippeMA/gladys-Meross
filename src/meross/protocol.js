@@ -87,6 +87,23 @@ export function isHubNamespace(namespace) {
 }
 
 /**
+ * Namespaces a device answers with when it REFUSES a message.
+ *
+ * A refusal is not an HTTP error and not a timeout: the device replies
+ * promptly, with a normal envelope, carrying an error namespace. Treating that
+ * as a success is the worst possible outcome — the command silently does
+ * nothing while Gladys shows it as applied.
+ */
+export const HUB_EXCEPTION_NAMESPACE = 'Appliance.Hub.Exception';
+
+export function isErrorNamespace(namespace) {
+  if (typeof namespace !== 'string') {
+    return false;
+  }
+  return namespace === HUB_EXCEPTION_NAMESPACE || namespace.endsWith('.Error');
+}
+
+/**
  * Hub sensors report temperatures and humidities in TENTHS of a unit
  * (231 -> 23.1 °C, 546 -> 54.6 %).
  */

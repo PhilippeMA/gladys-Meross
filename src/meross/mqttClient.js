@@ -23,7 +23,14 @@
 import { randomUUID } from 'node:crypto';
 import mqtt from 'mqtt';
 import { createLogger } from '@gladysassistant/integration-sdk';
-import { buildMessage, generateMessageId, isSignatureValid, md5, METHOD } from './protocol.js';
+import {
+  buildMessage,
+  generateMessageId,
+  isErrorNamespace,
+  isSignatureValid,
+  md5,
+  METHOD,
+} from './protocol.js';
 
 const logger = createLogger({ name: 'meross-mqtt' });
 
@@ -171,12 +178,26 @@ export class MerossMqttClient {
       return;
     }
 
-    const { messageId, method } = message.header ?? {};
+    const { messageId, method, namespace } = message.header ?? {};
 
     const waiting = this.pending.get(messageId);
     if (waiting && method !== METHOD.PUSH) {
       clearTimeout(waiting.timer);
       this.pending.delete(messageId);
+
+      // A refusal comes back as a normal, correctly signed reply carrying an
+      // error namespace. Resolving it would report success for a command that
+      // did nothing at all.
+      if (isErrorNamespace(namespace)) {
+        waiting.reject(
+          new Error(
+            `Meross refused the message (${namespace}): ${JSON.stringify(message.payload)}`,
+          ),
+        );
+        return;
+      }
+
+      logger.debug(`Reply ${namespace}: ${JSON.stringify(message.payload)}`);
       waiting.resolve(message.payload ?? {});
       return;
     }

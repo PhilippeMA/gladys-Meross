@@ -12,6 +12,7 @@ import {
   buildMessage,
   generateMessageId,
   intToRgb,
+  isErrorNamespace,
   isSignatureValid,
   LIGHT_CAPACITY,
   md5,
@@ -120,6 +121,19 @@ test('rgb values are clamped into the 24-bit range', () => {
   assert.equal(toRgbInt(0xffffff + 100), 0xffffff);
   assert.equal(toRgbInt('not a number'), 0);
   assert.equal(rgbToInt({ r: 999, g: -5, b: 12.6 }), (255 << 16) | (0 << 8) | 13);
+});
+
+test('a refusal namespace is recognised as an error, not as a reply', () => {
+  // A refused command comes back as a normal, correctly signed message: only
+  // the namespace says it failed. Missing that reports success for a no-op.
+  assert.equal(isErrorNamespace('Appliance.Control.Error'), true);
+  assert.equal(isErrorNamespace('Appliance.Hub.Exception'), true);
+  assert.equal(isErrorNamespace('Appliance.System.Error'), true);
+
+  assert.equal(isErrorNamespace('Appliance.Hub.ToggleX'), false);
+  assert.equal(isErrorNamespace('Appliance.Control.ToggleX'), false);
+  assert.equal(isErrorNamespace(undefined), false);
+  assert.equal(isErrorNamespace(null), false);
 });
 
 test('light capacity bits are the Meross ones', () => {

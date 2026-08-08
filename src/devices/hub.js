@@ -331,6 +331,7 @@ export async function onSetValue(client, { device, subDeviceId, kind, value }) {
   switch (kind) {
     case FEATURE_KIND.ON_OFF: {
       const onoff = Number(value) === 1 ? 1 : 0;
+      requireAbility(device, NAMESPACE.HUB_TOGGLEX, subDeviceId);
       await client.request(device.uuid, NAMESPACE.HUB_TOGGLEX, METHOD.SET, {
         togglex: [{ id: subDeviceId, onoff, channel: 0 }],
       });
@@ -342,6 +343,7 @@ export async function onSetValue(client, { device, subDeviceId, kind, value }) {
       if (!Number.isFinite(celsius)) {
         throw new Error(`Invalid target temperature for ${device.name}`);
       }
+      requireAbility(device, NAMESPACE.HUB_MTS100_TEMPERATURE, subDeviceId);
       // The valve expects tenths of a degree, in the `custom` preset.
       await client.request(device.uuid, NAMESPACE.HUB_MTS100_TEMPERATURE, METHOD.SET, {
         temperature: [{ id: subDeviceId, custom: toDeciUnit(celsius) }],
@@ -352,6 +354,28 @@ export async function onSetValue(client, { device, subDeviceId, kind, value }) {
     default:
       throw new Error(`Feature ${kind} is read-only on sub-device ${subDeviceId}`);
   }
+}
+
+/**
+ * Refuse to send a namespace the hub does not advertise.
+ *
+ * Sending it anyway is worse than failing: a hub answers an unsupported
+ * namespace with an error reply, and before that reply was surfaced the command
+ * looked like it had worked while nothing moved. Failing here names the
+ * namespace that is missing and lists what the hub DOES offer, which is the
+ * information needed to add support for the sub-device.
+ */
+function requireAbility(device, namespace, subDeviceId) {
+  if (namespace in (device.ability ?? {})) {
+    return;
+  }
+  const available = Object.keys(device.ability ?? {})
+    .filter(isHubNamespace)
+    .join(', ');
+  throw new Error(
+    `Hub "${device.name}" does not support ${namespace}, needed to control sub-device ` +
+      `${subDeviceId}. Hub namespaces available: ${available || 'none'}`,
+  );
 }
 
 /**

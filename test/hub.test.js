@@ -8,6 +8,7 @@ import assert from 'node:assert/strict';
 import { isHub, MerossClient, mergeHubPayload } from '../src/meross/client.js';
 import { HUB_PAYLOAD_KEYS, NAMESPACE } from '../src/meross/protocol.js';
 import { parseDeviceExternalId, subDevicePlatformId } from '../src/devices/featureIds.js';
+import * as hub from '../src/devices/hub.js';
 import { powerPlug, smartHub } from './helpers/merossFixtures.js';
 
 function emptyHub() {
@@ -163,6 +164,48 @@ test('a failed hub read does not wedge the coalescing guard', async () => {
   await client.refreshSubDeviceStates(device);
   // ...and the next call is free to try again rather than reusing a dead promise.
   assert.equal(device.subDeviceRefresh.promise, undefined);
+});
+
+// --- Refusing to send what the hub cannot do ---------------------------------
+
+test('a command needing a namespace the hub lacks fails with a useful message', async () => {
+  // Better a visible failure naming what is missing than a message the hub
+  // silently refuses while Gladys shows the switch as flipped.
+  const device = smartHub();
+  delete device.ability[NAMESPACE.HUB_TOGGLEX];
+  const client = createCountingClient();
+
+  await assert.rejects(
+    () =>
+      hub.onSetValue(client, {
+        device,
+        subDeviceId: '0000C3D4',
+        kind: 'on-off',
+        value: 1,
+      }),
+    (err) => {
+      assert.match(err.message, /does not support Appliance\.Hub\.ToggleX/);
+      // It must also say what the hub DOES offer, to guide the next step.
+      assert.match(err.message, /Appliance\.Hub\./);
+      return true;
+    },
+  );
+
+  assert.equal(client.reads.length, 0, 'nothing should have been sent');
+});
+
+test('a command the hub supports is still sent normally', async () => {
+  const device = smartHub();
+  const client = createCountingClient();
+
+  await hub.onSetValue(client, {
+    device,
+    subDeviceId: '0000C3D4',
+    kind: 'on-off',
+    value: 1,
+  });
+
+  assert.deepEqual(client.reads, [NAMESPACE.HUB_TOGGLEX]);
 });
 
 test('a sub-device platform id survives the round trip', () => {
