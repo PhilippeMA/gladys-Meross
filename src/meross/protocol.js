@@ -147,6 +147,12 @@ export const HUB_SUBID_PAYLOAD_KEYS = {
   'Appliance.Control.WaterPlan.Skip': 'control',
   'Appliance.Digest.WaterPlan': 'digest',
   'Appliance.Control.Sensor.LatestX': 'latest',
+  // Both configuration namespaces are read with `config`, NOT with a key named
+  // after the namespace. Probing them with `waterPlan` earned `error 5000` on
+  // every shape tried, which read like "unsupported" and was only ever "wrong
+  // key".
+  'Appliance.Config.DeviceCfg': 'config',
+  'Appliance.Config.WaterPlan': 'config',
 };
 
 /** The key a namespace uses to name a sub-device: `subId` for these, `id` elsewhere. */

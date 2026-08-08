@@ -30,6 +30,7 @@ import {
   NAMESPACE,
   namespacePayloadKeys,
   SUB_DEVICE_ID_KEY,
+  WATER_ONOFF,
 } from './protocol.js';
 
 const logger = createLogger({ name: 'meross-client' });
@@ -63,6 +64,7 @@ export const PROBE_NAMESPACES = [
   'Appliance.Control.WaterEvent',
   'Appliance.Digest.WaterPlan',
   'Appliance.Config.WaterPlan',
+  'Appliance.Config.DeviceCfg',
   'Appliance.Control.Sensor.LatestX',
 ];
 
@@ -92,6 +94,27 @@ export function probePayloads(namespace, subDeviceIds = []) {
   }
 
   return payloads;
+}
+
+/**
+ * The SET shapes worth trying on `Appliance.Control.Water`, most likely first.
+ *
+ * EVERY shape is a stop (`onoff: 2`). That invariant is what makes it safe to
+ * send them all blindly, and it is pinned by a test: a shape that could start a
+ * watering has no place in a diagnostic.
+ */
+export function wateringStopShapes(subId, durationSeconds = 900) {
+  const base = { subId, channel: 0, onoff: WATER_ONOFF.STOP };
+  return [
+    // What meross_lan sends, and the only shape confirmed against hardware.
+    { control: [base] },
+    // Ours: same, plus the duration the Meross app includes.
+    { control: [{ ...base, dura: Math.round(durationSeconds) }] },
+    // Echoing the exact shape the device reports its own state in.
+    { control: [{ ...base, lmTime: 0 }] },
+    // A single object rather than a list, in case SET is indexed differently.
+    { control: base },
+  ];
 }
 
 export class MerossClient {
@@ -627,6 +650,42 @@ export class MerossClient {
         return { namespace, successes, attempts };
       }),
     );
+  }
+
+  /**
+   * Find out which SET shape — if any — a hub answers on
+   * `Appliance.Control.Water`.
+   *
+   * This exists because the namespace answers a GET over the cloud and ignores
+   * a SET there, in silence rather than with `error 5000`. Silence means the
+   * message was dropped before it was ever dispatched, so the payload is not
+   * obviously the problem — but "not obviously" is not "certainly", and one
+   * round of trying settles it.
+   *
+   * This is the ONE diagnostic that writes, and it is bounded so that writing
+   * costs nothing: every shape is a STOP. Stopping is a no-op when nothing is
+   * running, so this can be run at any moment without watering anything. The
+   * GET-only probe above stays GET-only.
+   */
+  async probeWateringSet(device, subDeviceId, { durationSeconds = 900 } = {}) {
+    const results = [];
+
+    for (const payload of wateringStopShapes(subDeviceId, durationSeconds)) {
+      try {
+        const reply = await this.request(
+          device.uuid,
+          NAMESPACE.CONTROL_WATER,
+          METHOD.SET,
+          payload,
+          { timeoutMs: PROBE_TIMEOUT_MS },
+        );
+        results.push({ request: payload, payload: reply });
+      } catch (err) {
+        results.push({ request: payload, error: err.message });
+      }
+    }
+
+    return results;
   }
 
   /** Read the instantaneous electricity measurement of a channel. */

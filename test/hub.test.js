@@ -5,8 +5,14 @@
 
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { isHub, MerossClient, mergeHubPayload, mergeSubIdPayload } from '../src/meross/client.js';
-import { HUB_PAYLOAD_KEYS, NAMESPACE } from '../src/meross/protocol.js';
+import {
+  isHub,
+  MerossClient,
+  mergeHubPayload,
+  mergeSubIdPayload,
+  wateringStopShapes,
+} from '../src/meross/client.js';
+import { HUB_PAYLOAD_KEYS, NAMESPACE, WATER_ONOFF } from '../src/meross/protocol.js';
 import { parseDeviceExternalId, subDevicePlatformId } from '../src/devices/featureIds.js';
 import * as hub from '../src/devices/hub.js';
 import { publishDeviceStates } from '../src/devices/index.js';
@@ -205,6 +211,56 @@ test('probing never sends anything but a GET', async () => {
   await client.probeNamespaces(device);
   assert.ok(methods.length > 0);
   assert.deepEqual([...new Set(methods)], ['GET']);
+});
+
+test('the watering SET probe can only ever stop, never start', async () => {
+  // This is the one diagnostic that writes, and the whole reason it is
+  // acceptable is that a stop is a no-op when nothing is running. A shape that
+  // could open a valve would turn a diagnostic into a watering, on someone
+  // else's garden, with no one watching.
+  const client = createCountingClient();
+  const device = wateringHub();
+
+  const sent = [];
+  client.request = async (uuid, namespace, method, payload) => {
+    sent.push({ namespace, method, payload });
+    return {};
+  };
+
+  await client.probeWateringSet(device, '1B0091AFC74E', { durationSeconds: 900 });
+
+  assert.ok(sent.length > 0);
+  for (const { namespace, method, payload } of sent) {
+    assert.equal(namespace, 'Appliance.Control.Water');
+    assert.equal(method, 'SET');
+    const entries = Array.isArray(payload.control) ? payload.control : [payload.control];
+    for (const entry of entries) {
+      assert.equal(entry.onoff, WATER_ONOFF.STOP, `${JSON.stringify(entry)} must be a stop`);
+      assert.equal(entry.subId, '1B0091AFC74E');
+    }
+  }
+});
+
+test('the watering SET probe reports each shape, answered or not', async () => {
+  const client = createCountingClient();
+  const device = wateringHub();
+
+  // Only the shape without a duration is answered.
+  client.request = async (uuid, namespace, method, payload) => {
+    if ('dura' in (payload.control?.[0] ?? {})) {
+      throw new Error('did not answer in time');
+    }
+    return { control: [{ subId: '1B0091AFC74E', onoff: 2 }] };
+  };
+
+  const results = await client.probeWateringSet(device, '1B0091AFC74E');
+
+  assert.equal(results.length, wateringStopShapes('1B0091AFC74E').length);
+  const answered = results.filter((result) => result.payload);
+  const failed = results.filter((result) => result.error);
+  assert.ok(answered.length > 0, 'the shapes that work are reported');
+  assert.ok(failed.length > 0, 'and so are the ones that do not');
+  assert.match(failed[0].error, /did not answer/);
 });
 
 test('a namespace that refuses every shape reports what was tried', async () => {
