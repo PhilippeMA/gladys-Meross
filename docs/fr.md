@@ -78,9 +78,14 @@ peut la fournir.
 ### Intervalle de rafraîchissement
 
 Les prises qui mesurent la consommation et les capteurs derrière un hub sont lus à cet
-intervalle (60 secondes par défaut). Tout le reste — marche/arrêt, couleurs, position de la
-porte de garage — arrive **instantanément**, poussé par l'appareil, y compris lorsque
-quelqu'un appuie sur un bouton physique ou utilise l'application Meross.
+intervalle. Choisissez-le dans la liste : **chaque minute** (valeur par défaut, et intervalle
+le plus lent que Gladys accepte) jusqu'à chaque seconde.
+
+Tout le reste — marche/arrêt, couleurs, position de la porte de garage — arrive
+**instantanément**, poussé par l'appareil, y compris lorsque quelqu'un appuie sur un bouton
+physique ou utilise l'application Meross. L'intervalle le plus lent convient donc à la
+plupart des installations ; un intervalle plus rapide ne fait qu'augmenter le nombre de
+requêtes vers Meross.
 
 ## Actions
 

@@ -9,7 +9,12 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
-import { DEFAULT_CONFIG, REGIONS } from '../src/config.js';
+import {
+  DEFAULT_CONFIG,
+  normalizePollFrequency,
+  POLL_FREQUENCIES,
+  REGIONS,
+} from '../src/config.js';
 
 const manifest = JSON.parse(
   await readFile(new URL('../gladys-assistant-integration.json', import.meta.url), 'utf8'),
@@ -29,14 +34,37 @@ test('every manifest action is registered in index.js', () => {
 
 test('config_schema defaults stay consistent with DEFAULT_CONFIG', () => {
   for (const field of manifest.config_schema) {
-    if (field.default !== undefined) {
-      assert.equal(
-        DEFAULT_CONFIG[field.key],
-        field.default,
-        `DEFAULT_CONFIG.${field.key} must match the manifest default`,
-      );
+    if (field.default === undefined) {
+      continue;
     }
+    // A select stores its value as a string; the code keeps poll_frequency as
+    // the number Gladys expects in the device payload, so compare through the
+    // same normalization the runtime applies.
+    const expected =
+      field.key === 'poll_frequency' ? normalizePollFrequency(field.default) : field.default;
+
+    assert.equal(
+      DEFAULT_CONFIG[field.key],
+      expected,
+      `DEFAULT_CONFIG.${field.key} must match the manifest default`,
+    );
   }
+});
+
+test('the refresh interval offers exactly the frequencies Gladys accepts', () => {
+  // Anything else is refused at publish time with "invalid poll frequency",
+  // which takes the whole device batch down with it.
+  const field = manifest.config_schema.find((f) => f.key === 'poll_frequency');
+  assert.equal(field.type, 'select', 'a free number would let the user pick a rejected value');
+
+  const offered = field.options.map((option) => Number(option.value)).sort((a, b) => a - b);
+  assert.deepEqual(
+    offered,
+    [...POLL_FREQUENCIES].sort((a, b) => a - b),
+  );
+
+  // The manifest default must itself be one of the offered options.
+  assert.ok(field.options.some((option) => option.value === field.default));
 });
 
 test('every stored config field is known to the code', () => {

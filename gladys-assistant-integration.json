@@ -67,16 +67,22 @@
     },
     {
       "key": "poll_frequency",
-      "type": "number",
-      "label": { "en": "Refresh interval (s)", "fr": "Intervalle de rafraîchissement (s)" },
+      "type": "select",
+      "label": { "en": "Refresh interval", "fr": "Intervalle de rafraîchissement" },
       "description": {
-        "en": "How often power-monitoring devices are read. On/off states arrive in real time and are not polled.",
-        "fr": "Fréquence de lecture des appareils avec mesure de consommation. Les états on/off arrivent en temps réel."
+        "en": "How often metering plugs and hub sensors are read. On/off states arrive in real time and are never polled, so the slowest setting suits most homes.",
+        "fr": "Fréquence de lecture des prises avec mesure et des capteurs de hub. Les états on/off arrivent en temps réel : l'intervalle le plus lent convient à la plupart des installations."
       },
       "required": false,
-      "default": 60,
-      "min": 30,
-      "max": 3600
+      "default": "60000",
+      "options": [
+        { "value": "60000", "label": { "en": "Every minute", "fr": "Chaque minute" } },
+        { "value": "30000", "label": { "en": "Every 30 seconds", "fr": "Toutes les 30 secondes" } },
+        { "value": "15000", "label": { "en": "Every 15 seconds", "fr": "Toutes les 15 secondes" } },
+        { "value": "10000", "label": { "en": "Every 10 seconds", "fr": "Toutes les 10 secondes" } },
+        { "value": "2000", "label": { "en": "Every 2 seconds", "fr": "Toutes les 2 secondes" } },
+        { "value": "1000", "label": { "en": "Every second", "fr": "Chaque seconde" } }
+      ]
     }
   ],
   "actions": [

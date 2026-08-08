@@ -59,7 +59,7 @@ gladys.onPoll(async (device) => {
   if (!client) {
     return;
   }
-  await handlePoll(gladys, client, device);
+  await handlePoll(gladys, client, device, config);
 });
 
 // --- Manifest actions: buttons in the Configuration screen -------------------
@@ -159,9 +159,7 @@ gladys.onConfigUpdated(async (newConfig) => {
   // re-route every device, then report the ACTUAL outcome.
   await publishTransports(await client.refreshTransports(config));
   // poll_frequency lives in the discovery payload, so republish it.
-  await gladys.publishDiscoveredDevices(
-    buildDiscoveredDevices(gladys, client.getDevices(), config),
-  );
+  await publishDevices(buildDiscoveredDevices(gladys, client.getDevices(), config));
 });
 
 // --- Connection lifecycle ----------------------------------------------------
@@ -232,11 +230,46 @@ async function stopMeross() {
   }
 }
 
+/**
+ * Publish the device list, tolerating one bad apple.
+ *
+ * `publishDiscoveredDevices` is all-or-nothing: Gladys validates the whole
+ * batch and rejects it entirely if a SINGLE device is malformed. One unknown
+ * piece of hardware would then hide every other device in the house. So when
+ * the batch is refused, publish device by device: the offenders are named in
+ * the logs, everything else still reaches the user.
+ */
+async function publishDevices(devices) {
+  try {
+    await gladys.publishDiscoveredDevices(devices);
+    return;
+  } catch (err) {
+    if (err?.status !== 400) {
+      throw err;
+    }
+    logger.error(`Gladys refused the device batch (${err.message}), retrying one by one`, err);
+  }
+
+  let published = 0;
+  for (const device of devices) {
+    try {
+      await gladys.publishDiscoveredDevices([device]);
+      published += 1;
+    } catch (err) {
+      logger.error(
+        `Gladys refused the device "${device.name}" (${device.external_id}): ${err.message}. ` +
+          `It will not appear; the other devices are unaffected.`,
+      );
+    }
+  }
+  logger.info(`Published ${published}/${devices.length} device(s) after the batch was refused`);
+}
+
 /** Publish the devices, their transports and their current states. */
 async function publishEverything() {
   const devices = client.getDevices();
 
-  await gladys.publishDiscoveredDevices(buildDiscoveredDevices(gladys, devices, config));
+  await publishDevices(buildDiscoveredDevices(gladys, devices, config));
   await publishTransports(client.getTransportEntries());
 
   // Seed Gladys with what we already know, so the dashboard is right from the

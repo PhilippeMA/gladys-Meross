@@ -72,10 +72,13 @@ devices only accept commands signed with your account key, and only Meross can h
 
 ### Refresh interval
 
-Plugs that measure consumption and sensors behind a hub are read at this interval
-(60 seconds by default). Everything else — on/off, colours, the garage door position —
-arrives **instantly**, pushed by the device, including when someone presses a physical
-button or uses the Meross app.
+Plugs that measure consumption and sensors behind a hub are read at this interval. Pick it
+from the list: **every minute** (the default, and the slowest Gladys supports) down to every
+second.
+
+Everything else — on/off, colours, the garage door position — arrives **instantly**, pushed
+by the device, including when someone presses a physical button or uses the Meross app. So
+the slowest setting suits most homes; a faster one only means more requests to Meross.
 
 ## Actions
 

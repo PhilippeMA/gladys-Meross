@@ -11,6 +11,19 @@
 // -----------------------------------------------------------------------------
 
 /**
+ * The ONLY polling intervals Gladys accepts, in MILLISECONDS
+ * (`DEVICE_POLL_FREQUENCIES` in the core). Publishing a device with anything
+ * else is rejected with `400 invalid poll frequency`, so this list — not a free
+ * number — is what the Configuration screen offers.
+ *
+ * Note the ceiling: one minute is the slowest polling Gladys supports.
+ */
+export const POLL_FREQUENCIES = [1000, 2000, 10000, 15000, 30000, 60000];
+
+/** Slowest allowed interval: the friendliest default for a cloud API. */
+export const DEFAULT_POLL_FREQUENCY = 60000;
+
+/**
  * Defaults. They MUST stay consistent with the `default` values declared in the
  * manifest `config_schema` (a unit test enforces it).
  */
@@ -18,7 +31,9 @@ export const DEFAULT_CONFIG = {
   email: '',
   password: '',
   region: 'eu',
-  poll_frequency: 60, // seconds, only used by the power-monitoring devices
+  // Milliseconds. Only used by the devices that cannot push: power monitoring
+  // and hub sub-devices.
+  poll_frequency: DEFAULT_POLL_FREQUENCY,
   // Reserved key (NOT in config_schema): the manifest declares both 'local' and
   // 'cloud' in `transports`, so Gladys shows a "Prefer the local connection"
   // toggle and sends the choice here. Read-only for the integration.
@@ -36,10 +51,32 @@ export function normalizeConfig(raw = {}) {
     email: String(raw.email ?? DEFAULT_CONFIG.email).trim(),
     password: String(raw.password ?? DEFAULT_CONFIG.password),
     region: normalizeRegion(raw.region),
-    poll_frequency: Number(raw.poll_frequency ?? DEFAULT_CONFIG.poll_frequency),
+    // The select stores a string; the device payload needs the number, and it
+    // must be one Gladys knows.
+    poll_frequency: normalizePollFrequency(raw.poll_frequency),
     // A boolean: anything but an explicit false means true.
     GLADYS_PREFER_LOCAL: raw.GLADYS_PREFER_LOCAL !== false,
   };
+}
+
+/**
+ * Coerce whatever the form sends into an interval Gladys accepts.
+ *
+ * Anything unknown snaps to the CLOSEST allowed value rather than falling back
+ * to the default: a stale config asking for 300 s means "poll slowly", and the
+ * slowest Gladys offers (60 s) honours that far better than an arbitrary reset.
+ */
+export function normalizePollFrequency(value) {
+  const requested = Number(value);
+  if (!Number.isFinite(requested) || requested <= 0) {
+    return DEFAULT_POLL_FREQUENCY;
+  }
+  if (POLL_FREQUENCIES.includes(requested)) {
+    return requested;
+  }
+  return POLL_FREQUENCIES.reduce((closest, candidate) =>
+    Math.abs(candidate - requested) < Math.abs(closest - requested) ? candidate : closest,
+  );
 }
 
 /** Accepted regions, matching the manifest select options. */

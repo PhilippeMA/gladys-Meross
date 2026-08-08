@@ -27,6 +27,7 @@ import * as plug from './plug.js';
 import * as light from './light.js';
 import * as garageDoor from './garageDoor.js';
 import * as hub from './hub.js';
+import { normalizePollFrequency } from '../config.js';
 import { deviceIds, parseDeviceExternalId, parseFeatureExternalId } from './featureIds.js';
 
 const logger = createLogger({ name: 'devices' });
@@ -64,7 +65,11 @@ export function gladysDevicesOf(kind, gladys, device, config) {
       external_id: ids.device,
       // Only devices with something to poll get a frequency: an on/off-only
       // plug is entirely push-driven and does not need to be woken up.
-      ...(shouldPoll(device, kind) ? { poll_frequency: config.poll_frequency } : {}),
+      // Normalized here too: Gladys rejects the WHOLE publish batch when a
+      // single device carries a frequency outside its allowed list.
+      ...(shouldPoll(device, kind)
+        ? { poll_frequency: normalizePollFrequency(config.poll_frequency) }
+        : {}),
       features,
       params: buildParams(device),
     },
@@ -195,7 +200,7 @@ export async function handleSetValue(gladys, client, { device: gladysDevice, fea
 }
 
 /** Refresh one device on Gladys' schedule. */
-export async function handlePoll(gladys, client, gladysDevice) {
+export async function handlePoll(gladys, client, gladysDevice, config) {
   const { merossDevice } = findMerossDevice(client, gladysDevice.external_id);
   const kind = findKind(merossDevice);
   if (!kind) {
@@ -213,7 +218,7 @@ export async function handlePoll(gladys, client, gladysDevice) {
   // separately. `poll` refreshes them, and may return entries of its own.
   const extra =
     typeof kind.poll === 'function'
-      ? (await kind.poll(client, merossDevice)).map((entry) => ({
+      ? (await kind.poll(client, merossDevice, config)).map((entry) => ({
           platformId: merossDevice.uuid,
           ...entry,
         }))

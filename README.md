@@ -93,18 +93,24 @@ change — including when someone presses a physical button or uses the Meross a
 power-metering devices and hub sub-devices declare a `poll_frequency`, because electricity
 readings and hub sensor values are only available on request.
 
+`poll_frequency` is in MILLISECONDS and Gladys accepts only its own
+`DEVICE_POLL_FREQUENCIES` values — 1 s, 2 s, 10 s, 15 s, 30 s or 1 minute, which is the
+slowest it supports. Anything else is refused with `400 invalid poll frequency`, and the
+refusal takes the whole publish batch with it. Hence the select in the manifest rather than
+a free number, and `normalizePollFrequency()` guarding every device payload.
+
 A hub is read **once** per cycle no matter how many sub-devices it carries: each sub-device
 is its own Gladys device with its own schedule, so their polls arrive as a burst and are
 coalesced into a single hub read.
 
 ## Configuration
 
-| Field                | Notes                                                                   |
-| -------------------- | ----------------------------------------------------------------------- |
-| Meross email         | Same account as the mobile app                                          |
-| Meross password      | `secret` field: stored encrypted by Gladys, sent hashed (MD5) to Meross |
-| Meross region        | Europe, America, Asia/Pacific or Global — a wrong region refuses login  |
-| Refresh interval (s) | Power-metering devices only (default 60)                                |
+| Field            | Notes                                                                   |
+| ---------------- | ----------------------------------------------------------------------- |
+| Meross email     | Same account as the mobile app                                          |
+| Meross password  | `secret` field: stored encrypted by Gladys, sent hashed (MD5) to Meross |
+| Meross region    | Europe, America, Asia/Pacific or Global — a wrong region refuses login  |
+| Refresh interval | One of the intervals Gladys accepts, 1 minute at the slowest (default)  |
 
 Three buttons are available in the Configuration screen:
 

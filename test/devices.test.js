@@ -32,9 +32,9 @@ import * as light from '../src/devices/light.js';
 import * as garageDoor from '../src/devices/garageDoor.js';
 import * as hub from '../src/devices/hub.js';
 import { NAMESPACE } from '../src/meross/protocol.js';
-import { DEFAULT_CONFIG } from '../src/config.js';
+import { DEFAULT_CONFIG, POLL_FREQUENCIES } from '../src/config.js';
 
-const config = { ...DEFAULT_CONFIG, poll_frequency: 60 };
+const config = { ...DEFAULT_CONFIG };
 
 /** Feature helper: find one feature by the tail of its external_id. */
 function feature(device, suffix) {
@@ -130,10 +130,35 @@ test('only devices with something to poll declare a poll_frequency', () => {
   const [monitored] = buildDiscoveredDevices(gladys, [powerPlug()], config);
   const [plain] = buildDiscoveredDevices(gladys, [simplePlug()], config);
 
-  assert.equal(monitored.poll_frequency, 60);
+  assert.equal(monitored.poll_frequency, 60000);
   assert.equal(plain.poll_frequency, undefined);
   assert.equal(shouldPoll(powerPlug()), true);
   assert.equal(shouldPoll(simplePlug()), false);
+});
+
+test('no published device can carry a poll frequency Gladys would reject', () => {
+  // Gladys rejects the WHOLE publish batch on a single bad frequency
+  // ("devices[0].poll_frequency: invalid poll frequency"), so a stale or
+  // hand-edited config must never reach the payload unnormalized.
+  const gladys = createFakeGladys();
+
+  for (const raw of [60, 300, 3600, '45000', undefined, 'nonsense']) {
+    const devices = buildDiscoveredDevices(
+      gladys,
+      [powerPlug(), simplePlug(), colorBulb(), smartHub()],
+      { ...config, poll_frequency: raw },
+    );
+
+    assert.ok(devices.length > 0);
+    for (const device of devices) {
+      if (device.poll_frequency !== undefined) {
+        assert.ok(
+          POLL_FREQUENCIES.includes(device.poll_frequency),
+          `"${device.name}" published poll_frequency ${device.poll_frequency} for config ${JSON.stringify(raw)}`,
+        );
+      }
+    }
+  }
 });
 
 test('a colour bulb exposes brightness, colour and white temperature', () => {

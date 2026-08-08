@@ -26,6 +26,7 @@ import {
   DEVICE_FEATURE_UNITS,
 } from '@gladysassistant/integration-sdk';
 import { fromDeciUnit, isHubNamespace, METHOD, NAMESPACE, toDeciUnit } from '../meross/protocol.js';
+import { normalizePollFrequency } from '../config.js';
 import { buildFeatureKey, deviceIds, FEATURE_KIND, subDevicePlatformId } from './featureIds.js';
 
 const logger = createLogger({ name: 'hub' });
@@ -58,9 +59,12 @@ function hasThermostat(sub) {
   return Boolean(looksLikeValve) || sub.type?.startsWith('mts1');
 }
 
-/** A valve can also simply be switched on and off. */
+/**
+ * Anything behind a hub that opens and closes: a valve, but also a watering
+ * timer (MST100), which is a plain relay as far as the hub is concerned.
+ */
 function hasToggle(sub) {
-  return Boolean(sub.state?.togglex) || hasThermostat(sub);
+  return Boolean(sub.state?.togglex) || hasThermostat(sub) || sub.type?.startsWith('mst1');
 }
 
 /** A water leak sensor (MS400 / MS405). */
@@ -102,7 +106,7 @@ export function buildGladysDevices(gladys, device, config) {
     devices.push({
       name: sub.name,
       external_id: ids.device,
-      poll_frequency: config.poll_frequency,
+      poll_frequency: normalizePollFrequency(config.poll_frequency),
       features,
       params: [
         { name: 'MEROSS_UUID', value: String(device.uuid) },
@@ -349,7 +353,10 @@ export async function onSetValue(client, { device, subDeviceId, kind, value }) {
  * re-read here: names and pairings change when the user acts in the Meross app,
  * which the "Refresh the device list" action already covers.
  */
-export async function poll(client, device) {
-  await client.refreshSubDeviceStates(device);
+export async function poll(client, device, config) {
+  // Coalesce only the burst of simultaneous sub-device polls — never longer
+  // than half the interval the user asked for, so a fast setting stays fast.
+  const pollFrequency = normalizePollFrequency(config?.poll_frequency);
+  await client.refreshSubDeviceStates(device, { maxAgeMs: Math.min(5000, pollFrequency / 2) });
   return [];
 }
