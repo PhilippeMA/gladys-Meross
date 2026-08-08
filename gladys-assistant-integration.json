@@ -1,0 +1,102 @@
+{
+  "manifest_version": 1,
+  "type": "device",
+  "name": "Meross",
+  "description": {
+    "en": "Read and control your Meross smart plugs, switches, lights and garage doors.",
+    "fr": "Pilotez vos prises, interrupteurs, lampes et portes de garage Meross."
+  },
+  "version": "1.0.0",
+  "docker_image": "ghcr.io/philippema/gladys-meross:1.0.0",
+  "gladys_version": ">=4.85.0",
+  "cover_image": "https://raw.githubusercontent.com/PhilippeMA/gladys-Meross/main/cover.png",
+  "transports": ["local", "cloud"],
+  "config_schema": [
+    {
+      "key": "intro",
+      "type": "section",
+      "label": { "en": "Connect your Meross account", "fr": "Connectez votre compte Meross" },
+      "description": {
+        "en": "Sign in with the same email and password you use in the Meross mobile app. Your devices are then discovered automatically, with no pairing to redo. Meross allows a limited number of simultaneous sessions: if the app logs you out, sign in again there, both can coexist.",
+        "fr": "Utilisez les mêmes identifiants que dans l'application mobile Meross. Vos appareils sont ensuite découverts automatiquement, sans réappairage. Meross limite le nombre de sessions simultanées : si l'application vous déconnecte, reconnectez-vous, les deux peuvent coexister."
+      },
+      "links": [
+        {
+          "url": "https://www.meross.com/support/",
+          "label": { "en": "Meross support", "fr": "Support Meross" }
+        }
+      ]
+    },
+    {
+      "key": "email",
+      "type": "string",
+      "label": { "en": "Meross email", "fr": "E-mail Meross" },
+      "description": {
+        "en": "The email address of your Meross account.",
+        "fr": "L'adresse e-mail de votre compte Meross."
+      },
+      "placeholder": { "en": "you@example.com", "fr": "vous@exemple.com" },
+      "required": true
+    },
+    {
+      "key": "password",
+      "type": "secret",
+      "label": { "en": "Meross password", "fr": "Mot de passe Meross" },
+      "description": {
+        "en": "Stored encrypted by Gladys and only ever sent, hashed, to the Meross authentication server.",
+        "fr": "Stocké chiffré par Gladys et envoyé uniquement, sous forme hachée, au serveur d'authentification Meross."
+      },
+      "required": true
+    },
+    {
+      "key": "region",
+      "type": "select",
+      "label": { "en": "Meross region", "fr": "Région Meross" },
+      "description": {
+        "en": "The region your Meross account was created in. Pick the wrong one and the login is refused.",
+        "fr": "La région de création de votre compte Meross. En cas d'erreur, la connexion est refusée."
+      },
+      "required": true,
+      "default": "eu",
+      "options": [
+        { "value": "eu", "label": { "en": "Europe", "fr": "Europe" } },
+        { "value": "us", "label": { "en": "America", "fr": "Amérique" } },
+        { "value": "ap", "label": { "en": "Asia / Pacific", "fr": "Asie / Pacifique" } },
+        { "value": "global", "label": { "en": "Global (default)", "fr": "Global (par défaut)" } }
+      ]
+    },
+    {
+      "key": "poll_frequency",
+      "type": "number",
+      "label": { "en": "Refresh interval (s)", "fr": "Intervalle de rafraîchissement (s)" },
+      "description": {
+        "en": "How often power-monitoring devices are read. On/off states arrive in real time and are not polled.",
+        "fr": "Fréquence de lecture des appareils avec mesure de consommation. Les états on/off arrivent en temps réel."
+      },
+      "required": false,
+      "default": 60,
+      "min": 30,
+      "max": 3600
+    }
+  ],
+  "actions": [
+    {
+      "key": "test_connection",
+      "label": { "en": "Test the connection", "fr": "Tester la connexion" },
+      "description": {
+        "en": "Signs in to Meross and reports how many devices the account holds.",
+        "fr": "Se connecte à Meross et indique combien d'appareils contient le compte."
+      },
+      "timeout_seconds": 60
+    },
+    {
+      "key": "refresh_devices",
+      "label": { "en": "Refresh the device list", "fr": "Rafraîchir la liste des appareils" },
+      "description": {
+        "en": "Re-reads the account after adding or renaming a device in the Meross app.",
+        "fr": "Relit le compte après l'ajout ou le renommage d'un appareil dans l'application Meross."
+      },
+      "timeout_seconds": 90
+    }
+  ]
+}
