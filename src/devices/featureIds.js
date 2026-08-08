@@ -27,11 +27,47 @@ export const FEATURE_KIND = {
   CURRENT: 'current',
   ENERGY_TODAY: 'energy-today',
   DOOR: 'door',
+  // Hub sub-devices
+  TEMPERATURE: 'temperature',
+  HUMIDITY: 'humidity',
+  TARGET_TEMPERATURE: 'target-temperature',
+  BATTERY: 'battery',
+  LEAK: 'leak',
+  OPENING: 'opening',
 };
 
-/** External ids of one Meross device. */
-export function deviceIds(gladys, uuid) {
-  return gladys.externalIds(EXTERNAL_ID_TYPE, uuid);
+/**
+ * Platform id of a hub sub-device: `<hubUuid>-<subDeviceId>`.
+ *
+ * Meross uuids and sub-device ids are both dash-free hex strings, so the single
+ * dash stays an unambiguous separator on the way back.
+ */
+export function subDevicePlatformId(hubUuid, subDeviceId) {
+  return `${hubUuid}-${subDeviceId}`;
+}
+
+/**
+ * External ids of one Gladys device — a plain Meross device, or one
+ * sub-device behind a hub.
+ */
+export function deviceIds(gladys, platformId) {
+  return gladys.externalIds(EXTERNAL_ID_TYPE, platformId);
+}
+
+/**
+ * Resolve a device external_id back to the Meross device it addresses.
+ * @returns {{ uuid: string, subDeviceId: string | null }}
+ */
+export function parseDeviceExternalId(deviceExternalId) {
+  const platformId = deviceExternalId.slice(deviceExternalId.lastIndexOf(':') + 1);
+  const dash = platformId.indexOf('-');
+  if (dash < 0) {
+    return { uuid: platformId, subDeviceId: null };
+  }
+  return {
+    uuid: platformId.slice(0, dash),
+    subDeviceId: platformId.slice(dash + 1),
+  };
 }
 
 /** `on-off` + channel 2 -> `on-off-2`. */

@@ -43,7 +43,69 @@ export const NAMESPACE = {
   // Measurements
   CONTROL_ELECTRICITY: 'Appliance.Control.Electricity',
   CONTROL_CONSUMPTIONX: 'Appliance.Control.ConsumptionX',
+
+  // Hubs (MSH300, MSH400...). A hub is a gateway: it owns no feature of its
+  // own, it relays the state of the battery sensors and valves paired to it.
+  // Every hub namespace carries an ARRAY of per-sub-device objects keyed by
+  // `id` — where the other namespaces use `channel`.
+  HUB_ONLINE: 'Appliance.Hub.Online',
+  HUB_TOGGLEX: 'Appliance.Hub.ToggleX',
+  HUB_BATTERY: 'Appliance.Hub.Battery',
+  HUB_SUBDEVICE_LIST: 'Appliance.Hub.SubdeviceList',
+  HUB_SENSOR_ALL: 'Appliance.Hub.Sensor.All',
+  HUB_SENSOR_TEMPHUM: 'Appliance.Hub.Sensor.TempHum',
+  HUB_SENSOR_ALERT: 'Appliance.Hub.Sensor.Alert',
+  HUB_SENSOR_WATERLEAK: 'Appliance.Hub.Sensor.WaterLeak',
+  HUB_MTS100_ALL: 'Appliance.Hub.Mts100.All',
+  HUB_MTS100_TEMPERATURE: 'Appliance.Hub.Mts100.Temperature',
+  HUB_MTS100_MODE: 'Appliance.Hub.Mts100.Mode',
 };
+
+/** Prefix shared by every hub namespace. */
+export const HUB_NAMESPACE_PREFIX = 'Appliance.Hub.';
+
+/**
+ * Hub payloads are `{ <key>: [ { id, ... }, ... ] }`. This maps a namespace to
+ * the key its array lives under, so one merge routine handles them all.
+ */
+export const HUB_PAYLOAD_KEYS = {
+  [NAMESPACE.HUB_ONLINE]: 'online',
+  [NAMESPACE.HUB_TOGGLEX]: 'togglex',
+  [NAMESPACE.HUB_BATTERY]: 'battery',
+  [NAMESPACE.HUB_SENSOR_ALL]: 'all',
+  [NAMESPACE.HUB_SENSOR_TEMPHUM]: 'tempHum',
+  [NAMESPACE.HUB_SENSOR_ALERT]: 'alert',
+  [NAMESPACE.HUB_SENSOR_WATERLEAK]: 'waterLeak',
+  [NAMESPACE.HUB_MTS100_ALL]: 'all',
+  [NAMESPACE.HUB_MTS100_TEMPERATURE]: 'temperature',
+  [NAMESPACE.HUB_MTS100_MODE]: 'mode',
+};
+
+/** True for any `Appliance.Hub.*` namespace. */
+export function isHubNamespace(namespace) {
+  return typeof namespace === 'string' && namespace.startsWith(HUB_NAMESPACE_PREFIX);
+}
+
+/**
+ * Hub sensors report temperatures and humidities in TENTHS of a unit
+ * (231 -> 23.1 °C, 546 -> 54.6 %).
+ */
+export function fromDeciUnit(value) {
+  const number = Number(value);
+  if (!Number.isFinite(number)) {
+    return null;
+  }
+  return Math.round(number) / 10;
+}
+
+/** Inverse of `fromDeciUnit`, for the values we send back to a valve. */
+export function toDeciUnit(value) {
+  const number = Number(value);
+  if (!Number.isFinite(number)) {
+    return null;
+  }
+  return Math.round(number * 10);
+}
 
 export const METHOD = {
   GET: 'GET',

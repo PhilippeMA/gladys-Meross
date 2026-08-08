@@ -39,6 +39,7 @@ export const REGION_ENDPOINTS = {
 
 export const LOGIN_PATH = '/v1/Auth/signIn';
 export const DEVICE_LIST_PATH = '/v1/Device/devList';
+export const SUB_DEVICE_LIST_PATH = '/v1/Hub/getSubDevices';
 export const LOGOUT_PATH = '/v1/Profile/logout';
 
 /**
@@ -200,6 +201,28 @@ export async function listDevices({ baseUrl, token }) {
   const devices = await post({ baseUrl, path: DEVICE_LIST_PATH, token });
   const list = Array.isArray(devices) ? devices : [];
   logger.info(`Meross cloud returned ${list.length} device(s)`);
+  return list;
+}
+
+/**
+ * List the sub-devices paired to a hub (MSH300, MSH400...).
+ *
+ * Sub-devices never appear in `devList`: a hub is a single cloud device, and
+ * its sensors and valves only exist behind it. This endpoint is also the only
+ * source of their USER-CHOSEN NAMES — the hub's own payloads carry raw ids
+ * like `0000A1B2`, which would make for unusable device names in Gladys.
+ *
+ * @returns {Promise<Array<{ subDeviceId: string, subDeviceType: string, subDeviceName: string }>>}
+ */
+export async function listSubDevices({ baseUrl, token, hubUuid }) {
+  const subDevices = await post({
+    baseUrl,
+    path: SUB_DEVICE_LIST_PATH,
+    data: { uuid: hubUuid },
+    token,
+  });
+  const list = Array.isArray(subDevices) ? subDevices : [];
+  logger.info(`Hub ${hubUuid} has ${list.length} sub-device(s)`);
   return list;
 }
 

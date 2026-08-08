@@ -19,6 +19,7 @@ import { MerossClient } from './src/meross/client.js';
 import { deviceIds } from './src/devices/featureIds.js';
 import {
   buildDiscoveredDevices,
+  findKind,
   handlePoll,
   handleSetValue,
   publishDeviceStates,
@@ -96,6 +97,40 @@ gladys.onAction('refresh_devices', async () => {
     en: `${devices.length} device(s) refreshed from the Meross account.`,
     fr: `${devices.length} appareil(s) rafraîchi(s) depuis le compte Meross.`,
   };
+});
+
+// Diagnostic: report what each device of the account advertises, and what the
+// integration made of it. This is the fastest way to find out why a given
+// device did not show up — and the information needed to add support for it.
+gladys.onAction('diagnose', async () => {
+  if (!client) {
+    throw new Error('Not connected to Meross: check the configuration and the logs.');
+  }
+
+  const lines = client.getDevices().map((device) => {
+    const kind = findKind(device);
+    const abilities = Object.keys(device.ability ?? {});
+    const parts = [
+      `${device.name} (${device.type})`,
+      device.online ? 'online' : 'offline',
+      kind ? `handled as ${kind.KIND}` : 'NOT HANDLED',
+    ];
+
+    if (device.subDevices?.size > 0) {
+      parts.push(
+        `sub-devices: ${[...device.subDevices.values()]
+          .map((sub) => `${sub.name}/${sub.type || '?'}`)
+          .join(', ')}`,
+      );
+    }
+    parts.push(`abilities: ${abilities.join(' ') || 'none'}`);
+
+    return parts.join(' — ');
+  });
+
+  const report = lines.join('\n') || 'No device on this Meross account.';
+  logger.info(`Diagnostic report:\n${report}`);
+  return report;
 });
 
 // --- Configuration updated by the user ---------------------------------------
@@ -222,8 +257,8 @@ async function publishTransports(entries) {
     return;
   }
   await gladys.publishTransports(
-    entries.map(({ uuid, ...entry }) => ({
-      external_id: deviceIds(gladys, uuid).device,
+    entries.map(({ platformId, ...entry }) => ({
+      external_id: deviceIds(gladys, platformId).device,
       ...entry,
     })),
   );

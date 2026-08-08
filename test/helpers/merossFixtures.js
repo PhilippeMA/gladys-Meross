@@ -165,23 +165,93 @@ export function garageOpener(overrides = {}) {
   };
 }
 
-/** A device whose abilities this integration does not model (hub). */
-export function unsupportedHub(overrides = {}) {
+/** A device whose abilities this integration does not model yet. */
+export function unsupportedDevice(overrides = {}) {
   return {
     uuid: '8806239851916890865148e1e9aa88f8',
-    name: 'Sensor hub',
-    type: 'msh300',
+    name: 'Diffuser',
+    type: 'msxh0',
     channelCount: 1,
     channelNames: [''],
     online: true,
     ip: null,
     ability: {
-      'Appliance.Hub.ToggleX': {},
-      'Appliance.Hub.Sensor.All': {},
+      'Appliance.Control.Spray': {},
+      'Appliance.Control.Diffuser.Light': {},
     },
-    digest: { hub: { hubId: 1, mode: 0 } },
+    digest: { spray: [{ channel: 0, mode: 0 }] },
     ...overrides,
   };
+}
+
+/**
+ * MSH400 smart hub, with the three sub-device families the integration models:
+ * a thermometer, a thermostatic valve and a water leak sensor.
+ *
+ * The shapes below are the ones the hub namespaces really return: values in
+ * tenths of a unit, and one block per family under each sub-device.
+ */
+export function smartHub(overrides = {}) {
+  const hub = {
+    uuid: '8806239851916890865148e1e9aa88f8',
+    name: 'Smart Hub',
+    type: 'msh400',
+    channelCount: 1,
+    channelNames: [''],
+    online: true,
+    ip: '192.168.1.60',
+    ability: {
+      [NAMESPACE.SYSTEM_ALL]: {},
+      [NAMESPACE.HUB_ONLINE]: {},
+      [NAMESPACE.HUB_TOGGLEX]: {},
+      [NAMESPACE.HUB_BATTERY]: {},
+      [NAMESPACE.HUB_SENSOR_ALL]: {},
+      [NAMESPACE.HUB_MTS100_ALL]: {},
+      [NAMESPACE.HUB_MTS100_TEMPERATURE]: {},
+    },
+    digest: { hub: { hubId: 1234, mode: 0 } },
+    subDevices: new Map(),
+    ...overrides,
+  };
+
+  // Only seed the default sub-devices when the caller did not supply its own
+  // set — an explicitly empty map means "a hub with nothing paired".
+  if (!('subDevices' in overrides)) {
+    hub.subDevices.set('0000A1B2', {
+      id: '0000A1B2',
+      name: 'Living room thermometer',
+      type: 'ms100',
+      state: {
+        online: { status: 1 },
+        tempHum: { latestTime: 1700000000, latestTemperature: 231, latestHumidity: 546 },
+        battery: { value: 87 },
+      },
+    });
+    hub.subDevices.set('0000C3D4', {
+      id: '0000C3D4',
+      name: 'Bedroom valve',
+      type: 'mts100v3',
+      state: {
+        online: { status: 1 },
+        togglex: { onoff: 1 },
+        mode: { state: 0 },
+        temperature: { room: 210, currentSet: 200, min: 50, max: 350, openWindow: 0 },
+        battery: { value: 64 },
+      },
+    });
+    hub.subDevices.set('0000E5F6', {
+      id: '0000E5F6',
+      name: 'Cellar leak sensor',
+      type: 'ms400',
+      state: {
+        online: { status: 1 },
+        waterLeak: { latestWaterLeak: 0 },
+        battery: { value: 92 },
+      },
+    });
+  }
+
+  return hub;
 }
 
 /**
@@ -205,6 +275,11 @@ export function createFakeClient(devices = []) {
     async fetchState(uuid) {
       requests.push({ uuid, namespace: NAMESPACE.SYSTEM_ALL, method: 'GET' });
       return byUuid.get(uuid)?.digest ?? {};
+    },
+
+    async refreshSubDeviceStates(device) {
+      requests.push({ uuid: device.uuid, namespace: 'refreshSubDeviceStates', method: 'GET' });
+      return device.subDevices;
     },
 
     async fetchElectricity(uuid, channel = 0) {

@@ -22,10 +22,29 @@ that toggles a relay is understood on day one.
 | Power strip              | MSS425, MSS425E        | One on/off feature per outlet, plus a master                    |
 | Bulb / light strip       | MSL120, MSL320, MSL430 | On/off, brightness, colour, white temperature                   |
 | Garage door opener       | MSG100, MSG200         | Open/close, with the real door position fed back                |
+| Hub                      | MSH300, MSH400         | Its sub-devices, published individually (see below)             |
 
-**Not supported yet:** the MSH300 hub and its sub-devices (MS100 temperature sensors,
-MTS100 thermostatic valves). They speak a different, hub-scoped namespace family; the
-integration skips them with a log line rather than publishing empty devices.
+### Hubs and their sub-devices
+
+A hub owns nothing the user can act on — it is a gateway. So the hub itself is never
+published: each sub-device paired to it becomes its own Gladys device, with the name chosen
+in the Meross app.
+
+| Sub-device         | Typical models | Features in Gladys                                    |
+| ------------------ | -------------- | ----------------------------------------------------- |
+| Thermometer        | MS100          | Temperature, humidity, battery                        |
+| Thermostatic valve | MTS100, MTS150 | Target temperature, room temperature, on/off, battery |
+| Water leak sensor  | MS400, MS405   | Leak detected, battery                                |
+| Door/window sensor | MS200          | Opening, battery                                      |
+
+Sub-device features are derived from the **data a sub-device actually reports**, with its
+type only as a fallback hint: hub generations name their types inconsistently, but they all
+report a `tempHum` block for a thermometer and a `temperature` block for a valve. A
+sub-device that reports nothing usable is skipped with a log line naming its raw payload.
+
+**Known gap:** the valve _mode_ (comfort / economy / schedule) is not exposed yet, only the
+target temperature. The numeric mode scale Gladys expects could not be confirmed, and a
+wrong mapping would mislabel the modes in the UI.
 
 ## How it works
 
@@ -71,8 +90,12 @@ the one place Meross discloses it.
 
 On/off states, colours and door positions arrive **pushed** over MQTT the moment they
 change — including when someone presses a physical button or uses the Meross app. Only the
-power-metering devices declare a `poll_frequency`, because electricity readings are
-available on request only.
+power-metering devices and hub sub-devices declare a `poll_frequency`, because electricity
+readings and hub sensor values are only available on request.
+
+A hub is read **once** per cycle no matter how many sub-devices it carries: each sub-device
+is its own Gladys device with its own schedule, so their polls arrive as a burst and are
+coalesced into a single hub read.
 
 ## Configuration
 
@@ -83,12 +106,15 @@ available on request only.
 | Meross region        | Europe, America, Asia/Pacific or Global — a wrong region refuses login  |
 | Refresh interval (s) | Power-metering devices only (default 60)                                |
 
-Two buttons are available in the Configuration screen:
+Three buttons are available in the Configuration screen:
 
 - **Test the connection** — signs in with the credentials currently in the form and reports
   how many devices the account holds;
 - **Refresh the device list** — re-reads the account after you add or rename a device in
-  the Meross app.
+  the Meross app;
+- **Diagnose my devices** — lists every device, its abilities, its sub-devices and the kind
+  the integration matched it to. This is the fastest way to find out why a device did not
+  show up.
 
 The session token is cached in the integration config and released on shutdown: Meross caps
 the number of concurrent sessions per account, so the integration does not burn a new one on
@@ -125,10 +151,11 @@ npm start
 | `src/meross/localClient.js` | Direct LAN control                                       |
 | `src/meross/client.js`      | Session, inventory, transport routing                    |
 | `src/devices/`              | One module per device _kind_, matched on abilities       |
+| `src/devices/hub.js`        | Hub sub-devices: one Meross device -> many Gladys ones   |
 
 ### Tests
 
-`npm test` runs 79 unit tests with no network and no hardware: message signing, the cloud
+`npm test` runs 106 unit tests with no network and no hardware: message signing, the cloud
 error contract, digest merging, and every device mapping (discovery payloads, state reading,
 command routing) against realistic Meross fixtures.
 

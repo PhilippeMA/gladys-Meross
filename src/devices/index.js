@@ -4,31 +4,39 @@
 // Unlike a fixed-hardware integration, the device list here is DISCOVERED: it
 // is whatever the Meross account holds. So instead of one module per physical
 // device, this registry holds one module per KIND of device, and every module
-// answers the same four questions:
+// answers the same questions:
 //
 //   matches(device)              -> is this mine?
 //   buildFeatures(device, ids)   -> which Gladys features does it expose?
-//   buildStates(device)          -> which values can I read from the digest?
+//   buildStates(device)          -> which values can I read from what I know?
 //   onSetValue(client, {...})    -> run a command
+//   poll(client, device)         -> refresh what a read cannot give (optional)
 //
 // Kinds are matched on the ABILITIES the firmware advertises
 // (`Appliance.System.Ability`), never on a model name. A Meross reference
 // released tomorrow that toggles a relay is recognised as a plug on day one.
+//
+// A hub is the exception that shapes the interfaces below: it maps ONE Meross
+// device to MANY Gladys devices (its sub-devices). Such a kind implements
+// `buildGladysDevices()` and `buildStateEntries()` instead, and the two helpers
+// `gladysDevicesOf` / `stateEntriesOf` hide the difference from the callers.
 // -----------------------------------------------------------------------------
 
 import { createLogger } from '@gladysassistant/integration-sdk';
 import * as plug from './plug.js';
 import * as light from './light.js';
 import * as garageDoor from './garageDoor.js';
-import { deviceIds, parseFeatureExternalId } from './featureIds.js';
+import * as hub from './hub.js';
+import { deviceIds, parseDeviceExternalId, parseFeatureExternalId } from './featureIds.js';
 
 const logger = createLogger({ name: 'devices' });
 
 /**
- * Order matters: a light also advertises `ToggleX`, so it must be tested
- * before the plug kind, which deliberately claims everything else that toggles.
+ * Order matters: a light also advertises `ToggleX`, and so does a hub, so both
+ * must be tested before the plug kind — which deliberately claims everything
+ * else that toggles.
  */
-export const DEVICE_KINDS = [light, garageDoor, plug];
+export const DEVICE_KINDS = [hub, light, garageDoor, plug];
 
 /** Find the kind that owns a Meross device, or null when unsupported. */
 export function findKind(device) {
@@ -36,11 +44,51 @@ export function findKind(device) {
 }
 
 /**
+ * The Gladys devices one Meross device produces — usually exactly one, but a
+ * hub produces one per sub-device.
+ */
+export function gladysDevicesOf(kind, gladys, device, config) {
+  if (typeof kind.buildGladysDevices === 'function') {
+    return kind.buildGladysDevices(gladys, device, config);
+  }
+
+  const ids = deviceIds(gladys, device.uuid);
+  const features = kind.buildFeatures(device, ids);
+  if (features.length === 0) {
+    return [];
+  }
+
+  return [
+    {
+      name: device.name,
+      external_id: ids.device,
+      // Only devices with something to poll get a frequency: an on/off-only
+      // plug is entirely push-driven and does not need to be woken up.
+      ...(shouldPoll(device, kind) ? { poll_frequency: config.poll_frequency } : {}),
+      features,
+      params: buildParams(device),
+    },
+  ];
+}
+
+/**
+ * The states one Meross device can report, each tagged with the platform id of
+ * the Gladys device it belongs to.
+ */
+export function stateEntriesOf(kind, device) {
+  if (typeof kind.buildStateEntries === 'function') {
+    return kind.buildStateEntries(device);
+  }
+  return kind.buildStates(device).map((state) => ({ platformId: device.uuid, ...state }));
+}
+
+/**
  * Build the Gladys discovery payload for every supported device of the account.
  *
  * A device the integration cannot model yet is skipped with a log line rather
  * than published as an empty shell: an empty device in the UI is worse than no
- * device at all.
+ * device at all. The log carries the abilities the firmware advertised, which
+ * is exactly what is needed to add support for it.
  */
 export function buildDiscoveredDevices(gladys, merossDevices, config) {
   const devices = [];
@@ -50,27 +98,18 @@ export function buildDiscoveredDevices(gladys, merossDevices, config) {
     if (!kind) {
       logger.info(
         `Skipping unsupported Meross device "${device.name}" (${device.type}): ` +
-          `no matching device kind for its abilities`,
+          `no matching device kind for its abilities [${Object.keys(device.ability ?? {}).join(', ')}]`,
       );
       continue;
     }
 
-    const ids = deviceIds(gladys, device.uuid);
-    const features = kind.buildFeatures(device, ids);
-    if (features.length === 0) {
+    const built = gladysDevicesOf(kind, gladys, device, config);
+    if (built.length === 0) {
       logger.info(`Skipping "${device.name}" (${device.type}): no usable feature`);
       continue;
     }
 
-    devices.push({
-      name: device.name,
-      external_id: ids.device,
-      // Only devices with something to poll get a frequency: an on/off-only
-      // plug is entirely push-driven and does not need to be woken up.
-      ...(shouldPoll(device, kind) ? { poll_frequency: config.poll_frequency } : {}),
-      features,
-      params: buildParams(device),
-    });
+    devices.push(...built);
   }
 
   return devices;
@@ -96,21 +135,17 @@ function buildParams(device) {
   return params;
 }
 
-/**
- * Turn the states a kind read from the digest into the batch payload of
- * `gladys.publishStates()`.
- */
-export function toGladysStates(gladys, device, states) {
-  const ids = deviceIds(gladys, device.uuid);
-  return states.map(({ featureKey, state }) => ({
-    device_feature_external_id: ids.feature(featureKey),
+/** Turn state entries into the batch payload of `gladys.publishStates()`. */
+export function toGladysStates(gladys, entries) {
+  return entries.map(({ platformId, featureKey, state }) => ({
+    device_feature_external_id: deviceIds(gladys, platformId).feature(featureKey),
     state,
   }));
 }
 
 /**
- * Publish everything currently known about a device (from the cached digest).
- * Used right after discovery and on every real-time push.
+ * Publish everything currently known about a Meross device (from the cached
+ * state). Used right after discovery and on every real-time push.
  */
 export async function publishDeviceStates(gladys, device) {
   const kind = findKind(device);
@@ -118,7 +153,7 @@ export async function publishDeviceStates(gladys, device) {
     return;
   }
 
-  const states = toGladysStates(gladys, device, kind.buildStates(device));
+  const states = toGladysStates(gladys, stateEntriesOf(kind, device));
   if (states.length > 0) {
     await gladys.publishStates(states);
   }
@@ -132,7 +167,7 @@ export async function publishDeviceStates(gladys, device) {
  * pretending the light changed.
  */
 export async function handleSetValue(gladys, client, { device: gladysDevice, feature, value }) {
-  const merossDevice = findMerossDevice(gladys, client, gladysDevice.external_id);
+  const { merossDevice, subDeviceId } = findMerossDevice(client, gladysDevice.external_id);
   const parsed = parseFeatureExternalId(feature.external_id);
   if (!parsed) {
     throw new Error(`Unreadable feature external_id ${feature.external_id}`);
@@ -145,6 +180,7 @@ export async function handleSetValue(gladys, client, { device: gladysDevice, fea
 
   const applied = await kind.onSetValue(client, {
     device: merossDevice,
+    subDeviceId,
     kind: parsed.kind,
     channel: parsed.channel,
     value,
@@ -160,37 +196,44 @@ export async function handleSetValue(gladys, client, { device: gladysDevice, fea
 
 /** Refresh one device on Gladys' schedule. */
 export async function handlePoll(gladys, client, gladysDevice) {
-  const merossDevice = findMerossDevice(gladys, client, gladysDevice.external_id);
+  const { merossDevice } = findMerossDevice(client, gladysDevice.external_id);
   const kind = findKind(merossDevice);
   if (!kind) {
     return;
   }
 
-  // The digest carries on/off, brightness, door position...
-  await client.fetchState(merossDevice.uuid);
-  const states = kind.buildStates(merossDevice);
-
-  // ...but electricity and energy have to be asked for separately.
-  if (typeof kind.poll === 'function') {
-    states.push(...(await kind.poll(client, merossDevice)));
+  // The digest carries on/off, brightness, door position — but a hub keeps
+  // nothing there (its sub-devices live in their own namespaces), so reading it
+  // would be a wasted round trip per sub-device.
+  if (kind.readsDigest !== false) {
+    await client.fetchState(merossDevice.uuid);
   }
 
-  const payload = toGladysStates(gladys, merossDevice, states);
+  // ...but electricity, energy and hub sub-devices have to be asked for
+  // separately. `poll` refreshes them, and may return entries of its own.
+  const extra =
+    typeof kind.poll === 'function'
+      ? (await kind.poll(client, merossDevice)).map((entry) => ({
+          platformId: merossDevice.uuid,
+          ...entry,
+        }))
+      : [];
+
+  const payload = toGladysStates(gladys, [...stateEntriesOf(kind, merossDevice), ...extra]);
   if (payload.length > 0) {
     await gladys.publishStates(payload);
   }
 }
 
 /**
- * Resolve a Gladys device external_id back to the Meross device it describes.
- * The uuid is the last segment, which is why the id scheme is worth keeping
- * boring (see featureIds.js).
+ * Resolve a Gladys device external_id back to the Meross device it addresses,
+ * plus the sub-device when it points behind a hub.
  */
-export function findMerossDevice(gladys, client, deviceExternalId) {
-  const uuid = deviceExternalId.slice(deviceExternalId.lastIndexOf(':') + 1);
-  const device = client.getDevice(uuid);
-  if (!device) {
+export function findMerossDevice(client, deviceExternalId) {
+  const { uuid, subDeviceId } = parseDeviceExternalId(deviceExternalId);
+  const merossDevice = client.getDevice(uuid);
+  if (!merossDevice) {
     throw new Error(`Unknown Meross device for ${deviceExternalId}`);
   }
-  return device;
+  return { merossDevice, subDeviceId };
 }

@@ -15,9 +15,26 @@ the **Discovery** tab, ready to be added. No re-pairing, no extra hardware.
 | Power strip (MSS425…)                               | Each outlet on and off separately                       |
 | Bulb or light strip (MSL120, MSL320, MSL430…)       | On/off, brightness, colour and white temperature        |
 | Garage door opener (MSG100, MSG200)                 | Open and close it, and see whether it is really open    |
+| Hub (MSH300, MSH400)                                | Everything paired to it — see below                     |
 
-Sensors connected to a Meross **hub** (MSH300 with MS100 thermometers or MTS100 valves) are
-not supported yet: they are simply ignored.
+### Devices connected to a hub
+
+A hub is a gateway: it has nothing to switch on or off by itself. So the hub does not appear
+in Gladys — **each sensor paired to it does**, under the name you gave it in the Meross app.
+
+| Paired device                   | What you get in Gladys                                |
+| ------------------------------- | ----------------------------------------------------- |
+| Thermometer (MS100)             | Temperature, humidity, battery level                  |
+| Thermostatic valve (MTS100/150) | Target temperature, room temperature, on/off, battery |
+| Water leak sensor (MS400)       | Leak detected, battery level                          |
+| Door/window sensor (MS200)      | Opening, battery level                                |
+
+If your hub appears to do nothing, check that at least one sensor is **paired to it in the
+Meross app**: a hub with nothing paired has nothing to show. The **Diagnose my devices**
+button lists what the integration found behind it.
+
+The valve _mode_ (comfort, economy, schedule) is not available yet — only the target
+temperature, which is what automations need most.
 
 ## Configuration
 
@@ -55,16 +72,20 @@ devices only accept commands signed with your account key, and only Meross can h
 
 ### Refresh interval
 
-Only plugs that measure consumption are polled, at this interval (60 seconds by default).
-Everything else — on/off, colours, the garage door position — arrives **instantly**, pushed
-by the device, including when someone presses a physical button or uses the Meross app.
+Plugs that measure consumption and sensors behind a hub are read at this interval
+(60 seconds by default). Everything else — on/off, colours, the garage door position —
+arrives **instantly**, pushed by the device, including when someone presses a physical
+button or uses the Meross app.
 
 ## Actions
 
 - **Test the connection** — signs in with the credentials in the form and reports how many
   devices your account holds, and how many are online.
 - **Refresh the device list** — re-reads your account. Use it after adding or renaming a
-  device in the Meross app.
+  device in the Meross app, or after pairing a new sensor to a hub.
+- **Diagnose my devices** — lists every device on your account, what it can do, the sensors
+  found behind a hub, and how the integration handled each one. Start here when a device is
+  missing.
 
 ## Troubleshooting
 
@@ -79,8 +100,10 @@ what Meross tells it, and a device that is offline for Meross is offline here to
 account. Simply sign in again in the app: both sessions can coexist. The integration caches
 its session and releases it on shutdown to limit this.
 
-**A device is missing from the Discovery tab** — its type is probably not supported yet
-(hub sub-devices in particular). The integration logs a line for every device it skips.
+**A device is missing from the Discovery tab** — click **Diagnose my devices**: it tells you
+whether the device was seen, what it advertises, and whether the integration could handle it.
+If it is a sensor that should be behind a hub, check it is paired to that hub in the Meross
+app. The integration also logs a line for every device it skips, naming what it saw.
 
 **Nothing works, and I want to know why** — the integration logs everything it does. Open
 the integration logs from the Gladys UI (or `docker logs` on the host); set `LOG_LEVEL` to

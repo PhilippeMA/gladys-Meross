@@ -16,7 +16,8 @@ import {
   powerPlug,
   powerStrip,
   simplePlug,
-  unsupportedHub,
+  smartHub,
+  unsupportedDevice,
 } from './helpers/merossFixtures.js';
 import {
   buildDiscoveredDevices,
@@ -29,6 +30,7 @@ import {
 import * as plug from '../src/devices/plug.js';
 import * as light from '../src/devices/light.js';
 import * as garageDoor from '../src/devices/garageDoor.js';
+import * as hub from '../src/devices/hub.js';
 import { NAMESPACE } from '../src/meross/protocol.js';
 import { DEFAULT_CONFIG } from '../src/config.js';
 
@@ -61,14 +63,14 @@ test('relays of every generation are detected as plugs', () => {
 });
 
 test('a device whose abilities we do not model is not claimed', () => {
-  assert.equal(findKind(unsupportedHub()), null);
+  assert.equal(findKind(unsupportedDevice()), null);
 });
 
 // --- Discovery ---------------------------------------------------------------
 
 test('unsupported devices are skipped instead of published empty', () => {
   const gladys = createFakeGladys();
-  const devices = buildDiscoveredDevices(gladys, [powerPlug(), unsupportedHub()], config);
+  const devices = buildDiscoveredDevices(gladys, [powerPlug(), unsupportedDevice()], config);
 
   assert.equal(devices.length, 1);
   assert.equal(devices[0].name, 'Office plug');
@@ -385,6 +387,204 @@ test('a command for an unknown device fails loudly', async () => {
       }),
     /Unknown Meross device/,
   );
+});
+
+// --- Hubs and their sub-devices ----------------------------------------------
+
+test('a hub is detected as a hub, not as a plug through its Hub.ToggleX', () => {
+  assert.equal(findKind(smartHub()), hub);
+});
+
+test('a hub publishes one Gladys device per sub-device, and none for itself', () => {
+  const gladys = createFakeGladys();
+  const devices = buildDiscoveredDevices(gladys, [smartHub()], config);
+
+  assert.deepEqual(
+    devices.map((d) => d.name),
+    ['Living room thermometer', 'Bedroom valve', 'Cellar leak sensor'],
+  );
+  // The hub itself has nothing to read or act on: it must not appear.
+  assert.ok(!devices.some((d) => d.name === 'Smart Hub'));
+});
+
+test('a sub-device external_id addresses both the hub and the sub-device', () => {
+  const gladys = createFakeGladys();
+  const [thermometer] = buildDiscoveredDevices(gladys, [smartHub()], config);
+
+  assert.equal(thermometer.external_id, `meross:${smartHub().uuid}-0000A1B2`);
+});
+
+test('a thermometer exposes temperature, humidity and battery', () => {
+  const gladys = createFakeGladys();
+  const [thermometer] = buildDiscoveredDevices(gladys, [smartHub()], config);
+
+  assert.deepEqual(
+    thermometer.features.map((f) => f.name),
+    ['Temperature', 'Humidity', 'Battery'],
+  );
+  assert.equal(feature(thermometer, 'temperature-0').unit, 'celsius');
+  assert.equal(feature(thermometer, 'battery-0').unit, 'percent');
+});
+
+test('a valve exposes a target temperature bounded by the range it reports', () => {
+  const gladys = createFakeGladys();
+  const [, valve] = buildDiscoveredDevices(gladys, [smartHub()], config);
+
+  assert.deepEqual(
+    valve.features.map((f) => f.name),
+    ['Target temperature', 'Room temperature', 'On/Off', 'Battery'],
+  );
+
+  const target = feature(valve, 'target-temperature-0');
+  // min 50 / max 350 in tenths -> 5 °C / 35 °C
+  assert.equal(target.min, 5);
+  assert.equal(target.max, 35);
+  assert.equal(target.read_only, false);
+});
+
+test('a leak sensor exposes its leak state and battery', () => {
+  const gladys = createFakeGladys();
+  const [, , leak] = buildDiscoveredDevices(gladys, [smartHub()], config);
+
+  assert.deepEqual(
+    leak.features.map((f) => f.name),
+    ['Water leak', 'Battery'],
+  );
+  assert.equal(feature(leak, 'leak-0').category, 'leak-sensor');
+});
+
+test('sub-device values are converted out of tenths', async () => {
+  const gladys = createFakeGladys();
+  const device = smartHub();
+  await publishDeviceStates(gladys, device);
+
+  const states = Object.fromEntries(gladys.published.map((p) => [p.featureExternalId, p.state]));
+  const uuid = device.uuid;
+
+  // 231 -> 23.1 °C, 546 -> 54.6 %
+  assert.equal(states[`meross:${uuid}-0000A1B2:temperature-0`], 23.1);
+  assert.equal(states[`meross:${uuid}-0000A1B2:humidity-0`], 54.6);
+  assert.equal(states[`meross:${uuid}-0000A1B2:battery-0`], 87);
+  // The valve: room 210 -> 21 °C, target 200 -> 20 °C
+  assert.equal(states[`meross:${uuid}-0000C3D4:temperature-0`], 21);
+  assert.equal(states[`meross:${uuid}-0000C3D4:target-temperature-0`], 20);
+  assert.equal(states[`meross:${uuid}-0000C3D4:on-off-0`], 1);
+  assert.equal(states[`meross:${uuid}-0000E5F6:leak-0`], 0);
+});
+
+test('setting a valve target sends tenths of a degree to the right sub-device', async () => {
+  const gladys = createFakeGladys();
+  const device = smartHub();
+  const client = createFakeClient([device]);
+  const [, valve] = buildDiscoveredDevices(gladys, [device], config);
+
+  await handleSetValue(gladys, client, {
+    device: valve,
+    feature: feature(valve, 'target-temperature-0'),
+    value: 19.5,
+  });
+
+  assert.deepEqual(client.requests[0], {
+    uuid: device.uuid,
+    namespace: NAMESPACE.HUB_MTS100_TEMPERATURE,
+    method: 'SET',
+    payload: { temperature: [{ id: '0000C3D4', custom: 195 }] },
+  });
+});
+
+test('switching a valve addresses it by sub-device id, not by channel', async () => {
+  const gladys = createFakeGladys();
+  const device = smartHub();
+  const client = createFakeClient([device]);
+  const [, valve] = buildDiscoveredDevices(gladys, [device], config);
+
+  await handleSetValue(gladys, client, {
+    device: valve,
+    feature: feature(valve, 'on-off-0'),
+    value: 0,
+  });
+
+  assert.deepEqual(client.requests[0], {
+    uuid: device.uuid,
+    namespace: NAMESPACE.HUB_TOGGLEX,
+    method: 'SET',
+    payload: { togglex: [{ id: '0000C3D4', onoff: 0, channel: 0 }] },
+  });
+});
+
+test('a read-only sub-device feature refuses a command', async () => {
+  const gladys = createFakeGladys();
+  const device = smartHub();
+  const client = createFakeClient([device]);
+  const [thermometer] = buildDiscoveredDevices(gladys, [device], config);
+
+  await assert.rejects(
+    () =>
+      handleSetValue(gladys, client, {
+        device: thermometer,
+        feature: feature(thermometer, 'temperature-0'),
+        value: 20,
+      }),
+    /read-only/,
+  );
+});
+
+test('a sub-device with no usable data is skipped, not published empty', () => {
+  const gladys = createFakeGladys();
+  const device = smartHub({ subDevices: new Map() });
+  device.subDevices.set('0000FFFF', {
+    id: '0000FFFF',
+    name: 'Mystery sensor',
+    type: 'unknown999',
+    state: {},
+  });
+
+  assert.deepEqual(buildDiscoveredDevices(gladys, [device], config), []);
+});
+
+test('a hub sub-device is recognised from its data even with an unknown type', () => {
+  // Hub generations name their types inconsistently, so the data is the
+  // authority: a `tempHum` block means a thermometer, whatever the type says.
+  const gladys = createFakeGladys();
+  const device = smartHub({ subDevices: new Map() });
+  device.subDevices.set('0000ABCD', {
+    id: '0000ABCD',
+    name: 'New thermometer',
+    type: 'ms9999',
+    state: { tempHum: { latestTemperature: 195, latestHumidity: 480 } },
+  });
+
+  const [built] = buildDiscoveredDevices(gladys, [device], config);
+  assert.deepEqual(
+    built.features.map((f) => f.name),
+    ['Temperature', 'Humidity'],
+  );
+});
+
+test('polling a hub does not re-read its unused digest', async () => {
+  // Every sub-device polls independently; reading Appliance.System.All on the
+  // hub each time would be a pure waste, its digest holds no sub-device state.
+  const gladys = createFakeGladys();
+  const device = smartHub();
+  const client = createFakeClient([device]);
+  const [thermometer] = buildDiscoveredDevices(gladys, [device], config);
+
+  await handlePoll(gladys, client, thermometer);
+
+  assert.ok(!client.requests.some((r) => r.namespace === NAMESPACE.SYSTEM_ALL));
+});
+
+test('polling a hub refreshes its sub-devices and republishes them', async () => {
+  const gladys = createFakeGladys();
+  const device = smartHub();
+  const client = createFakeClient([device]);
+  const [thermometer] = buildDiscoveredDevices(gladys, [device], config);
+
+  await handlePoll(gladys, client, thermometer);
+
+  assert.ok(client.requests.some((r) => r.namespace === 'refreshSubDeviceStates'));
+  const states = Object.fromEntries(gladys.published.map((p) => [p.featureExternalId, p.state]));
+  assert.equal(states[`meross:${device.uuid}-0000A1B2:temperature-0`], 23.1);
 });
 
 // --- Polling -----------------------------------------------------------------

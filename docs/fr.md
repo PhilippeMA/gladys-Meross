@@ -16,9 +16,27 @@ matériel supplémentaire.
 | Multiprise (MSS425…)                            | Chaque prise séparément                                           |
 | Ampoule ou bandeau (MSL120, MSL320, MSL430…)    | Marche/arrêt, luminosité, couleur et température de blanc         |
 | Ouvre-porte de garage (MSG100, MSG200)          | L'ouvrir, la fermer, et voir si elle est réellement ouverte       |
+| Hub (MSH300, MSH400)                            | Tout ce qui lui est appairé — voir ci-dessous                     |
 
-Les capteurs reliés à un **hub** Meross (MSH300 avec thermomètres MS100 ou vannes MTS100) ne
-sont pas encore pris en charge : ils sont simplement ignorés.
+### Appareils reliés à un hub
+
+Un hub est une passerelle : il n'a rien à allumer ou éteindre par lui-même. Le hub
+n'apparaît donc pas dans Gladys — **chaque capteur qui lui est appairé, si**, sous le nom que
+vous lui avez donné dans l'application Meross.
+
+| Appareil appairé                  | Ce que vous obtenez dans Gladys                                       |
+| --------------------------------- | --------------------------------------------------------------------- |
+| Thermomètre (MS100)               | Température, humidité, niveau de batterie                             |
+| Vanne thermostatique (MTS100/150) | Température de consigne, température ambiante, marche/arrêt, batterie |
+| Détecteur de fuite (MS400)        | Fuite détectée, niveau de batterie                                    |
+| Capteur d'ouverture (MS200)       | Ouverture, niveau de batterie                                         |
+
+Si votre hub semble ne rien faire, vérifiez qu'au moins un capteur lui est **appairé dans
+l'application Meross** : un hub sans capteur n'a rien à afficher. Le bouton **Diagnostiquer
+mes appareils** liste ce que l'intégration a trouvé derrière lui.
+
+Le _mode_ des vannes (confort, éco, programmation) n'est pas encore disponible — seulement la
+température de consigne, qui est l'essentiel pour les automatisations.
 
 ## Configuration
 
@@ -59,17 +77,20 @@ peut la fournir.
 
 ### Intervalle de rafraîchissement
 
-Seules les prises qui mesurent la consommation sont interrogées, à cet intervalle
-(60 secondes par défaut). Tout le reste — marche/arrêt, couleurs, position de la porte de
-garage — arrive **instantanément**, poussé par l'appareil, y compris lorsque quelqu'un
-appuie sur un bouton physique ou utilise l'application Meross.
+Les prises qui mesurent la consommation et les capteurs derrière un hub sont lus à cet
+intervalle (60 secondes par défaut). Tout le reste — marche/arrêt, couleurs, position de la
+porte de garage — arrive **instantanément**, poussé par l'appareil, y compris lorsque
+quelqu'un appuie sur un bouton physique ou utilise l'application Meross.
 
 ## Actions
 
 - **Tester la connexion** — se connecte avec les identifiants du formulaire et indique
   combien d'appareils contient votre compte, et combien sont en ligne.
 - **Rafraîchir la liste des appareils** — relit votre compte. À utiliser après avoir ajouté
-  ou renommé un appareil dans l'application Meross.
+  ou renommé un appareil dans l'application Meross, ou appairé un capteur à un hub.
+- **Diagnostiquer mes appareils** — liste chaque appareil du compte, ses capacités, les
+  capteurs trouvés derrière un hub, et la façon dont l'intégration a traité chacun.
+  Commencez par là quand un appareil manque.
 
 ## Dépannage
 
@@ -86,9 +107,11 @@ compte. Reconnectez-vous simplement dans l'application : les deux sessions peuve
 coexister. L'intégration met sa session en cache et la libère à l'arrêt pour limiter le
 phénomène.
 
-**Un appareil est absent de l'onglet Découverte** — son type n'est probablement pas encore
-pris en charge (les sous-appareils de hub en particulier). L'intégration écrit une ligne de
-log pour chaque appareil ignoré.
+**Un appareil est absent de l'onglet Découverte** — cliquez sur **Diagnostiquer mes
+appareils** : le rapport indique si l'appareil a été vu, ce qu'il annonce, et si
+l'intégration a su le traiter. S'il s'agit d'un capteur censé être derrière un hub, vérifiez
+qu'il est bien appairé à ce hub dans l'application Meross. L'intégration écrit également une
+ligne de log pour chaque appareil ignoré, en précisant ce qu'elle a vu.
 
 **Rien ne fonctionne et je veux savoir pourquoi** — l'intégration journalise tout ce qu'elle
 fait. Ouvrez les logs de l'intégration depuis l'interface Gladys (ou `docker logs` sur

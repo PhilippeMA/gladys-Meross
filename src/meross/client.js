@@ -21,7 +21,7 @@ import { createLogger, DEVICE_TRANSPORTS } from '@gladysassistant/integration-sd
 import * as cloudApi from './cloudApi.js';
 import { MerossMqttClient } from './mqttClient.js';
 import { isReachable, localRequest } from './localClient.js';
-import { METHOD, NAMESPACE } from './protocol.js';
+import { HUB_PAYLOAD_KEYS, isHubNamespace, METHOD, NAMESPACE } from './protocol.js';
 
 const logger = createLogger({ name: 'meross-client' });
 
@@ -217,6 +217,8 @@ export class MerossClient {
         ability: {},
         digest: {},
         ip: null,
+        // Populated for hubs only: sub-device id -> { id, name, type, state }.
+        subDevices: new Map(),
       };
       this.devices.set(device.uuid, device);
     }
@@ -255,6 +257,10 @@ export class MerossClient {
 
       const allPayload = await this.cloudRequest(device.uuid, NAMESPACE.SYSTEM_ALL, METHOD.GET);
       applySystemAll(device, allPayload);
+
+      if (isHub(device)) {
+        await this.refreshSubDevices(device);
+      }
 
       await this.#resolveTransport(device);
     } catch (err) {
@@ -322,9 +328,28 @@ export class MerossClient {
     return [...this.devices.values()];
   }
 
-  /** Per-device transport, in the shape `gladys.publishTransports()` expects. */
+  /**
+   * Per-device transport, keyed by PLATFORM id (not uuid): a hub publishes no
+   * Gladys device of its own, so its transport belongs to each of its
+   * sub-devices — they are reached through it, so they share its channel.
+   */
   getTransportEntries() {
-    return [...this.transports.entries()].map(([uuid, entry]) => ({ uuid, ...entry }));
+    const entries = [];
+
+    for (const [uuid, entry] of this.transports) {
+      const device = this.devices.get(uuid);
+
+      if (device && isHub(device)) {
+        for (const sub of device.subDevices?.values() ?? []) {
+          entries.push({ platformId: `${uuid}-${sub.id}`, ...entry });
+        }
+        continue;
+      }
+
+      entries.push({ platformId: uuid, ...entry });
+    }
+
+    return entries;
   }
 
   // --- Messaging -------------------------------------------------------------
@@ -387,6 +412,102 @@ export class MerossClient {
     return device.digest;
   }
 
+  /**
+   * Enumerate the sub-devices of a hub and read their state.
+   *
+   * Two sources, and both are needed:
+   *   - the cloud endpoint gives the ids, the TYPES and the names the user
+   *     chose in the Meross app;
+   *   - the hub itself gives the live values, spread over one namespace per
+   *     family (sensors, valves, batteries).
+   */
+  async refreshSubDevices(device) {
+    const listed = await cloudApi
+      .listSubDevices({ baseUrl: this.baseUrl, token: this.session.token, hubUuid: device.uuid })
+      .catch((err) => {
+        logger.warn(`Could not list the sub-devices of hub ${device.name}`, err);
+        return [];
+      });
+
+    for (const raw of listed) {
+      const id = String(raw.subDeviceId ?? raw.id ?? '');
+      if (!id) {
+        continue;
+      }
+      const existing = device.subDevices.get(id);
+      device.subDevices.set(id, {
+        id,
+        name: raw.subDeviceName || existing?.name || id,
+        type: String(raw.subDeviceType ?? existing?.type ?? '').toLowerCase(),
+        state: existing?.state ?? {},
+      });
+    }
+
+    await this.refreshSubDeviceStates(device);
+
+    logger.info(
+      `Hub ${device.name}: ${device.subDevices.size} sub-device(s) — ` +
+        [...device.subDevices.values()].map((sub) => `${sub.name} (${sub.type})`).join(', '),
+    );
+
+    return device.subDevices;
+  }
+
+  /**
+   * Read the live values of a hub's sub-devices, without re-reading the cloud
+   * list. This is the polling path.
+   *
+   * A hub only answers the namespaces it declares, so each read is optional and
+   * a failure is not fatal: a hub with no valve paired simply has no Mts100
+   * data to give.
+   */
+  async refreshSubDeviceStates(device, { maxAgeMs = 5000 } = {}) {
+    // Every sub-device is its own Gladys device with its own poll_frequency, so
+    // a hub with five sensors gets polled five times in a burst — while ONE
+    // read already refreshes all of them. Coalesce: share the in-flight read,
+    // and skip one that just completed.
+    const pending = device.subDeviceRefresh;
+    if (pending?.promise) {
+      return pending.promise;
+    }
+    if (pending?.at && Date.now() - pending.at < maxAgeMs) {
+      return device.subDevices;
+    }
+
+    const promise = this.#readHubNamespaces(device);
+    device.subDeviceRefresh = { promise };
+
+    try {
+      return await promise;
+    } finally {
+      device.subDeviceRefresh = { at: Date.now() };
+    }
+  }
+
+  async #readHubNamespaces(device) {
+    for (const namespace of [
+      NAMESPACE.HUB_SENSOR_ALL,
+      NAMESPACE.HUB_MTS100_ALL,
+      NAMESPACE.HUB_BATTERY,
+      NAMESPACE.HUB_TOGGLEX,
+      NAMESPACE.HUB_ONLINE,
+    ]) {
+      if (!(namespace in device.ability)) {
+        continue;
+      }
+      try {
+        const payload = await this.request(device.uuid, namespace, METHOD.GET, {
+          [HUB_PAYLOAD_KEYS[namespace]]: [],
+        });
+        mergeHubPayload(device, namespace, payload);
+      } catch (err) {
+        logger.warn(`Hub ${device.name} did not answer ${namespace}`, err);
+      }
+    }
+
+    return device.subDevices;
+  }
+
   /** Read the instantaneous electricity measurement of a channel. */
   async fetchElectricity(uuid, channel = 0) {
     const payload = await this.request(uuid, NAMESPACE.CONTROL_ELECTRICITY, METHOD.GET, {
@@ -426,6 +547,10 @@ export class MerossClient {
 
     if (namespace === NAMESPACE.SYSTEM_ALL) {
       applySystemAll(device, payload);
+    } else if (isHubNamespace(namespace)) {
+      // Hub payloads are per SUB-DEVICE (keyed by `id`), not per channel:
+      // merging them into the digest would corrupt it.
+      mergeHubPayload(device, namespace, payload);
     } else {
       mergeDigest(device, payload);
     }
@@ -473,6 +598,70 @@ export function applySystemAll(device, payload = {}) {
   }
 
   return device;
+}
+
+/** True when a device is a hub, i.e. it advertises any `Appliance.Hub.*`. */
+export function isHub(device) {
+  return Object.keys(device?.ability ?? {}).some(isHubNamespace);
+}
+
+/**
+ * Merge a hub payload into the sub-devices it describes.
+ *
+ * Every hub namespace has the same shape — `{ <key>: [ { id, ... } ] }` — so
+ * one routine covers sensors, valves, batteries and online status. The state
+ * of a sub-device is the accumulation of all of them, because each namespace
+ * only carries its own slice.
+ *
+ * A sub-device the cloud never listed is still recorded: better an
+ * unnamed device the user can see than a silently dropped sensor.
+ */
+export function mergeHubPayload(device, namespace, payload = {}) {
+  const key = HUB_PAYLOAD_KEYS[namespace];
+  const entries = payload?.[key];
+  if (!Array.isArray(entries)) {
+    return device.subDevices;
+  }
+
+  device.subDevices = device.subDevices ?? new Map();
+
+  for (const entry of entries) {
+    const id = String(entry?.id ?? '');
+    if (!id) {
+      continue;
+    }
+
+    const sub = device.subDevices.get(id) ?? { id, name: id, type: '', state: {} };
+
+    if (namespace === NAMESPACE.HUB_SENSOR_ALL || namespace === NAMESPACE.HUB_MTS100_ALL) {
+      // An `All` payload is already a bag of per-family blocks: merge block by
+      // block so a later partial push cannot wipe a sibling block.
+      for (const [block, value] of Object.entries(entry)) {
+        if (block === 'id') {
+          continue;
+        }
+        sub.state[block] = mergeBlock(sub.state[block], value);
+      }
+    } else {
+      const { id: _ignored, ...rest } = entry;
+      sub.state[key] = mergeBlock(sub.state[key], rest);
+    }
+
+    device.subDevices.set(id, sub);
+  }
+
+  return device.subDevices;
+}
+
+/** Shallow-merge two state blocks, tolerating scalars and arrays. */
+function mergeBlock(existing, incoming) {
+  if (incoming === null || typeof incoming !== 'object' || Array.isArray(incoming)) {
+    return incoming;
+  }
+  if (existing === null || typeof existing !== 'object' || Array.isArray(existing)) {
+    return { ...incoming };
+  }
+  return { ...existing, ...incoming };
 }
 
 /**

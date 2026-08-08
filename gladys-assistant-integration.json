@@ -97,6 +97,15 @@
         "fr": "Relit le compte après l'ajout ou le renommage d'un appareil dans l'application Meross."
       },
       "timeout_seconds": 90
+    },
+    {
+      "key": "diagnose",
+      "label": { "en": "Diagnose my devices", "fr": "Diagnostiquer mes appareils" },
+      "description": {
+        "en": "Lists each device, what it can do and how the integration handled it.",
+        "fr": "Liste chaque appareil, ses capacités et la façon dont l'intégration l'a traité."
+      },
+      "timeout_seconds": 60
     }
   ]
 }
