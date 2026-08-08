@@ -41,6 +41,9 @@ const MQTT_PORT = 443;
 /** How long we wait for a device to answer a command over the cloud. */
 const DEFAULT_REQUEST_TIMEOUT_MS = 10_000;
 
+/** `err.code` set on a request the device never answered. */
+export const TIMEOUT_ERROR_CODE = 'MEROSS_TIMEOUT';
+
 export class MerossMqttClient {
   /**
    * @param {object} options
@@ -139,7 +142,12 @@ export class MerossMqttClient {
     const reply = new Promise((resolve, reject) => {
       const timer = setTimeout(() => {
         this.pending.delete(messageId);
-        reject(new Error(`Meross device ${uuid} did not answer ${namespace} in time`));
+        const err = new Error(`Meross device ${uuid} did not answer ${namespace} in time`);
+        // Tagged so callers can tell "not answering at all" from "answering
+        // with a refusal": silence means the namespace is a dead end, while a
+        // refusal only means this particular request was wrong.
+        err.code = TIMEOUT_ERROR_CODE;
+        reject(err);
       }, timeoutMs);
       // `unref` so a pending command never keeps the process alive on shutdown.
       timer.unref?.();

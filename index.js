@@ -49,7 +49,17 @@ gladys.onSetValue(async (device, feature, value) => {
   if (!client) {
     throw new Error('Not connected to Meross');
   }
-  await handleSetValue(gladys, client, { device, feature, value });
+
+  // Log the OUTCOME, not just the request. Without this the logs show a command
+  // arriving and nothing else, whether it worked or was refused — which is
+  // exactly the case that is hardest to diagnose.
+  try {
+    await handleSetValue(gladys, client, { device, feature, value });
+    logger.info(`onSetValue -> ${feature.external_id} applied`);
+  } catch (err) {
+    logger.error(`onSetValue -> ${feature.external_id} FAILED: ${err.message}`);
+    throw err;
+  }
 });
 
 // --- Polling: Gladys asks to refresh a device --------------------------------
@@ -136,6 +146,10 @@ gladys.onAction('diagnose', async () => {
             `\n  ? ${probe.namespace} with ${JSON.stringify(probe.request)}: ` +
               JSON.stringify(probe.payload),
           );
+          continue;
+        }
+        if (probe.silent) {
+          parts.push(`\n  ? ${probe.namespace}: no answer at all (this namespace is a dead end)`);
           continue;
         }
         // Nothing worked: list what was tried, so the next attempt can differ.

@@ -216,10 +216,18 @@ test('a namespace that refuses every shape reports what was tried', async () => 
 
   assert.equal(result.namespace, 'Appliance.Control.Water');
   assert.equal(result.payload, undefined);
-  // A bare read plus the namespace's own key as object and as array.
+  // A bare read, then the hub convention (list, then list targeting the
+  // sub-device by id), then the object form.
   assert.deepEqual(
     result.attempts.map((a) => a.request),
-    [{}, { water: {} }, { water: [] }],
+    [
+      {},
+      { water: [] },
+      { water: [{ id: '0000A1B2' }] },
+      { water: [{ id: '0000C3D4' }] },
+      { water: [{ id: '0000E5F6' }] },
+      { water: {} },
+    ],
   );
   assert.match(result.attempts[0].error, /error 5000/);
 });
@@ -241,7 +249,7 @@ test('probing stops at the first shape the device accepts', async () => {
 
   const [result] = await client.probeNamespaces(device);
 
-  assert.deepEqual(result.request, { water: {} });
+  assert.deepEqual(result.request, { water: [] });
   assert.deepEqual(result.payload, { water: [{ id: 'X', duration: 300 }] });
   // It must not keep probing once something worked.
   assert.equal(seen.length, 2);

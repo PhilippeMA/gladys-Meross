@@ -137,7 +137,16 @@ export function namespacePayloadKeys(namespace) {
   }
   const camel = last.charAt(0).toLowerCase() + last.slice(1);
   const lower = last.toLowerCase();
-  return camel === lower ? [camel] : [camel, lower];
+
+  const keys = camel === lower ? [camel] : [camel, lower];
+
+  // `Appliance.Control.Sensor.LatestX` is read with a `latest` key: the trailing
+  // X marks the namespace revision, not always the payload key.
+  if (/X$/.test(last)) {
+    keys.push(last.slice(0, -1).charAt(0).toLowerCase() + last.slice(1, -1));
+  }
+
+  return keys;
 }
 
 /**

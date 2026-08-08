@@ -19,7 +19,7 @@
 
 import { createLogger, DEVICE_TRANSPORTS } from '@gladysassistant/integration-sdk';
 import * as cloudApi from './cloudApi.js';
-import { MerossMqttClient } from './mqttClient.js';
+import { MerossMqttClient, TIMEOUT_ERROR_CODE } from './mqttClient.js';
 import { isReachable, localRequest } from './localClient.js';
 import {
   HUB_PAYLOAD_KEYS,
@@ -74,11 +74,20 @@ const PROBE_TIMEOUT_MS = 6000;
  * first: a bare read, then the namespace's own key as an object, then as an
  * array (hub-style namespaces answer lists).
  */
-export function probePayloads(namespace) {
+export function probePayloads(namespace, subDeviceIds = []) {
   const payloads = [{}];
+
   for (const key of namespacePayloadKeys(namespace)) {
-    payloads.push({ [key]: {} }, { [key]: [] });
+    // Hub namespaces all take an ARRAY of per-sub-device objects keyed by `id`.
+    // A watering timer is a sub-device, so its namespaces most likely follow the
+    // same convention — that is the shape worth trying before anything else.
+    payloads.push({ [key]: [] });
+    for (const id of subDeviceIds) {
+      payloads.push({ [key]: [{ id }] });
+    }
+    payloads.push({ [key]: {} });
   }
+
   return payloads;
 }
 
@@ -567,11 +576,12 @@ export class MerossClient {
     return Promise.all(
       advertised.map(async (namespace) => {
         const attempts = [];
+        const subDeviceIds = [...(device.subDevices?.keys() ?? [])];
 
         // A bare `{}` is rarely enough: most namespaces want their own key in
         // the request too, and answer `error 5000` without it. Try the
         // conventional shapes and report the first one that works.
-        for (const payload of probePayloads(namespace)) {
+        for (const payload of probePayloads(namespace, subDeviceIds)) {
           try {
             const reply = await this.request(device.uuid, namespace, METHOD.GET, payload, {
               timeoutMs: PROBE_TIMEOUT_MS,
@@ -579,6 +589,13 @@ export class MerossClient {
             return { namespace, request: payload, payload: reply, attempts };
           } catch (err) {
             attempts.push({ request: payload, error: err.message });
+
+            // Silence is different from a refusal: a namespace that does not
+            // answer at all will not answer a different payload either, so stop
+            // rather than burn one timeout per remaining shape.
+            if (err.code === TIMEOUT_ERROR_CODE) {
+              return { namespace, attempts, silent: true };
+            }
           }
         }
 

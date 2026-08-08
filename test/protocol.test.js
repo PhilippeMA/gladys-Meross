@@ -157,10 +157,17 @@ test('payload keys are derived from the last namespace segment', () => {
   assert.deepEqual(namespacePayloadKeys('Appliance.Control.Water'), ['water']);
   // Meross spells some keys camelCase and others flat, so offer both.
   assert.deepEqual(namespacePayloadKeys('Appliance.Digest.WaterPlan'), ['waterPlan', 'waterplan']);
-  assert.deepEqual(namespacePayloadKeys('Appliance.Control.ToggleX'), ['toggleX', 'togglex']);
+  // A trailing X marks the namespace revision, so the key without it is also a
+  // candidate (`Sensor.LatestX` is read with a `latest` key).
+  assert.deepEqual(namespacePayloadKeys('Appliance.Control.ToggleX'), [
+    'toggleX',
+    'togglex',
+    'toggle',
+  ]);
   assert.deepEqual(namespacePayloadKeys('Appliance.Control.Sensor.LatestX'), [
     'latestX',
     'latestx',
+    'latest',
   ]);
 });
 
