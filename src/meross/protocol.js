@@ -40,6 +40,8 @@ export const NAMESPACE = {
   CONTROL_TOGGLEX: 'Appliance.Control.ToggleX',
   CONTROL_LIGHT: 'Appliance.Control.Light',
   GARAGE_DOOR_STATE: 'Appliance.GarageDoor.State',
+  // Batching: carries complete messages, each dispatched internally.
+  CONTROL_MULTIPLE: 'Appliance.Control.Multiple',
   // Measurements
   CONTROL_ELECTRICITY: 'Appliance.Control.Electricity',
   CONTROL_CONSUMPTIONX: 'Appliance.Control.ConsumptionX',
@@ -334,6 +336,25 @@ export function buildMessage({
       sign: signMessage(messageId, key, timestamp),
     },
     payload,
+  };
+}
+
+/**
+ * Wrap messages in `Appliance.Control.Multiple`, the batching envelope.
+ *
+ * Each entry is a COMPLETE message — its own header, its own signature — and
+ * the device unpacks them and dispatches each one internally. That inner
+ * dispatch is the interesting part: it is a different path from the one a
+ * top-level message takes, which is why it is worth trying for a namespace the
+ * firmware accepts and then ignores.
+ *
+ * `maxCmdNum` in the device's ability entry caps how many fit in one batch.
+ */
+export function buildMultiplePayload(messages, key) {
+  return {
+    multiple: messages.map(({ namespace, method, payload }) =>
+      buildMessage({ namespace, method, payload, key }),
+    ),
   };
 }
 

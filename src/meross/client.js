@@ -31,6 +31,7 @@ import {
   namespacePayloadKeys,
   SUB_DEVICE_ID_KEY,
   WATER_ONOFF,
+  buildMultiplePayload,
 } from './protocol.js';
 
 const logger = createLogger({ name: 'meross-client' });
@@ -714,15 +715,39 @@ export class MerossClient {
    */
   async probeWateringSet(device, subDeviceId, { durationSeconds = 900 } = {}) {
     const results = [];
+    const shapes = wateringStopShapes(subDeviceId, durationSeconds);
 
-    for (const { method, payload } of wateringStopShapes(subDeviceId, durationSeconds)) {
+    // The batching envelope, when the hub offers it. A batched message is
+    // unpacked and dispatched INTERNALLY, which is a different path from the
+    // one a top-level message takes — worth a try for a namespace the firmware
+    // accepts and then ignores.
+    if (NAMESPACE.CONTROL_MULTIPLE in (device.ability ?? {})) {
+      shapes.push({
+        namespace: NAMESPACE.CONTROL_MULTIPLE,
+        method: METHOD.SET,
+        payload: buildMultiplePayload(
+          [
+            {
+              namespace: NAMESPACE.CONTROL_WATER,
+              method: METHOD.SET,
+              payload: {
+                control: [{ subId: subDeviceId, channel: 0, onoff: WATER_ONOFF.STOP }],
+              },
+            },
+          ],
+          this.session?.key,
+        ),
+      });
+    }
+
+    for (const { namespace = NAMESPACE.CONTROL_WATER, method, payload } of shapes) {
       try {
-        const reply = await this.request(device.uuid, NAMESPACE.CONTROL_WATER, method, payload, {
+        const reply = await this.request(device.uuid, namespace, method, payload, {
           timeoutMs: PROBE_TIMEOUT_MS,
         });
-        results.push({ method, request: payload, payload: reply });
+        results.push({ namespace, method, request: payload, payload: reply });
       } catch (err) {
-        results.push({ method, request: payload, error: err.message });
+        results.push({ namespace, method, request: payload, error: err.message });
       }
     }
 

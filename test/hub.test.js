@@ -231,8 +231,13 @@ test('the watering SET probe can only ever stop, never start', async () => {
   await client.probeWateringSet(device, '1B0091AFC74E', { durationSeconds: 900 });
 
   assert.ok(sent.length > 0);
-  for (const { namespace, payload } of sent) {
-    assert.equal(namespace, 'Appliance.Control.Water');
+  // A batched message hides its real commands one level down, so unwrap before
+  // checking: an invariant that only holds at the top level holds nowhere.
+  const commands = sent.flatMap(({ payload }) =>
+    Array.isArray(payload.multiple) ? payload.multiple.map((entry) => entry.payload) : [payload],
+  );
+
+  for (const payload of commands) {
     const entries = Array.isArray(payload.control) ? payload.control : [payload.control];
     for (const entry of entries) {
       assert.equal(entry.onoff, WATER_ONOFF.STOP, `${JSON.stringify(entry)} must be a stop`);
@@ -241,6 +246,32 @@ test('the watering SET probe can only ever stop, never start', async () => {
       assert.equal(entry.subId ?? entry.id, '1B0091AFC74E');
     }
   }
+});
+
+test('the watering probe batches only when the hub offers batching', async () => {
+  const client = createCountingClient();
+  const device = wateringHub();
+  device.ability['Appliance.Control.Multiple'] = { maxCmdNum: 5 };
+
+  const namespaces = [];
+  client.request = async (uuid, namespace, method, payload) => {
+    namespaces.push({ namespace, payload });
+    return {};
+  };
+
+  await client.probeWateringSet(device, '1B0091AFC74E');
+  const batched = namespaces.find((n) => n.namespace === 'Appliance.Control.Multiple');
+  assert.ok(batched, 'the batching envelope is tried');
+  // Each entry must be a complete, independently signed message.
+  assert.equal(batched.payload.multiple.length, 1);
+  assert.equal(batched.payload.multiple[0].header.namespace, 'Appliance.Control.Water');
+  assert.match(batched.payload.multiple[0].header.sign, /^[0-9a-f]{32}$/);
+
+  // A hub without the ability is never sent one.
+  const plain = wateringHub();
+  namespaces.length = 0;
+  await client.probeWateringSet(plain, '1B0091AFC74E');
+  assert.equal(namespaces.filter((n) => n.namespace === 'Appliance.Control.Multiple').length, 0);
 });
 
 test('the watering SET probe reports each shape, answered or not', async () => {
