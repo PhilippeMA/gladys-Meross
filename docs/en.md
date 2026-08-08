@@ -130,6 +130,25 @@ whether the device was seen, what it advertises, and whether the integration cou
 If it is a sensor that should be behind a hub, check it is paired to that hub in the Meross
 app. The integration also logs a line for every device it skips, naming what it saw.
 
+**Watering fails with "only works over the local network"** — the machine running Gladys
+cannot reach your hub directly. The message names the reason:
+
+- _no route to the device_ — Gladys is not on the same network as the hub. This is the usual
+  case when Gladys runs in Docker on another subnet or another VLAN.
+- _connection refused_ — the address answers but nothing listens: it is probably not your hub
+  any more (a DHCP lease that moved). Use **Refresh the device list**.
+- _no answer before the timeout_ — a firewall is dropping the packets.
+
+To confirm from the machine hosting Gladys:
+
+```bash
+curl -m 3 -X POST http://<hub-ip>/config -d '{}'
+```
+
+Anything other than a connection error means the hub is reachable. If it is not, the fix is on
+the network side — Gladys must be able to reach the hub's address. Everything else in this
+integration keeps working through the cloud; only watering needs the local channel.
+
 **Nothing works, and I want to know why** — the integration logs everything it does. Open
 the integration logs from the Gladys UI (or `docker logs` on the host); set `LOG_LEVEL` to
 `debug` for the full detail, including every message exchanged with your devices.

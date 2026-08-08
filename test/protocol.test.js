@@ -25,6 +25,7 @@ import {
   signMessage,
   toRgbInt,
 } from '../src/meross/protocol.js';
+import { describeNetworkError } from '../src/meross/localClient.js';
 
 test('md5 matches the reference digest', () => {
   assert.equal(md5('meross'), createHash('md5').update('meross').digest('hex'));
@@ -169,6 +170,24 @@ test('payload keys are derived from the last namespace segment', () => {
     'latestx',
     'latest',
   ]);
+});
+
+test('a network failure is explained, not reported as "fetch failed"', () => {
+  // Node hides the real reason in `cause`, and that reason IS the diagnosis:
+  // no route is a different problem from a closed port or a firewall.
+  assert.match(describeNetworkError({ cause: { code: 'EHOSTUNREACH' } }), /no route to the device/);
+  assert.match(describeNetworkError({ cause: { code: 'ENETUNREACH' } }), /no route to the device/);
+  assert.match(describeNetworkError({ cause: { code: 'ECONNREFUSED' } }), /nothing is listening/);
+  assert.match(describeNetworkError({ cause: { code: 'EACCES' } }), /firewall/);
+  assert.match(
+    describeNetworkError({
+      name: 'TimeoutError',
+      message: 'The operation was aborted due to timeout',
+    }),
+    /no answer before the timeout/,
+  );
+  // An unknown failure still says something rather than nothing.
+  assert.equal(describeNetworkError({ message: 'something else' }), 'something else');
 });
 
 test('light capacity bits are the Meross ones', () => {

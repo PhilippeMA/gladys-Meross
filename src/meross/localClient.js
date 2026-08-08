@@ -70,12 +70,22 @@ export async function localRequest({
 
   logger.debug(`LAN ${method} ${namespace} -> ${ip}`);
 
-  const response = await fetch(`http://${ip}/config`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify(message),
-    signal: AbortSignal.timeout(timeoutMs),
-  });
+  let response;
+  try {
+    response = await fetch(`http://${ip}/config`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(message),
+      signal: AbortSignal.timeout(timeoutMs),
+    });
+  } catch (err) {
+    // Node reports every network failure as a bare "fetch failed" and hides the
+    // reason in `cause`. That reason is the whole diagnosis: EHOSTUNREACH and
+    // ENETUNREACH mean there is no route to the device's network, ECONNREFUSED
+    // means the host is there but nothing listens, and a timeout means packets
+    // are being dropped. Surface it.
+    throw new Error(`${describeNetworkError(err)} (${ip})`, { cause: err });
+  }
 
   if (!response.ok) {
     throw new Error(`Meross LAN HTTP ${response.status} from ${ip}`);
@@ -101,6 +111,32 @@ export async function localRequest({
   return body?.payload ?? {};
 }
 
+/** Turn an opaque fetch rejection into something a user can act on. */
+export function describeNetworkError(err) {
+  const code = err?.cause?.code ?? err?.code;
+
+  switch (code) {
+    case 'EHOSTUNREACH':
+    case 'ENETUNREACH':
+      return `no route to the device (${code}): the machine running Gladys is not on that network`;
+    case 'ECONNREFUSED':
+      return 'connection refused: something answered but nothing is listening on port 80';
+    case 'EACCES':
+      return 'connection blocked (EACCES): a firewall or container policy is in the way';
+    case 'ETIMEDOUT':
+    case 'ENETDOWN':
+      return `no answer (${code}): packets are being dropped on the way`;
+    default:
+      break;
+  }
+
+  if (err?.name === 'TimeoutError' || /aborted due to timeout/i.test(err?.message ?? '')) {
+    return 'no answer before the timeout: the address is filtered or the device is offline';
+  }
+
+  return err?.message ?? 'unknown network error';
+}
+
 /**
  * Probe whether a device really answers on the LAN.
  *
@@ -122,6 +158,8 @@ export async function isReachable({ ip, key, timeoutMs = DEFAULT_TIMEOUT_MS }) {
     return true;
   } catch (err) {
     logger.debug(`Device ${ip} is not reachable on the LAN: ${err.message}`);
+    // The reason is what tells a route problem from a firewall problem.
+    isReachable.lastError = describeNetworkError(err);
     return false;
   }
 }

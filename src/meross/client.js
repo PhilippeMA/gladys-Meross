@@ -348,8 +348,9 @@ export class MerossClient {
         return;
       }
       logger.warn(
-        `${device.name} did not answer on the LAN at ${device.ip}, using the cloud. ` +
-          `Namespaces that only exist locally will not work.`,
+        `${device.name} did not answer on the LAN at ${device.ip} — ` +
+          `${isReachable.lastError ?? 'unknown reason'}. Using the cloud; namespaces that ` +
+          `only exist locally (watering) will not work.`,
       );
     } else {
       logger.warn(
