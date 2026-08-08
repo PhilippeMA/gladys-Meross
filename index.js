@@ -141,11 +141,13 @@ gladys.onAction('diagnose', async () => {
       // Read (never write) the namespaces we cannot model yet: their content is
       // what a future version needs in order to support the device properly.
       for (const probe of await client.probeNamespaces(device)) {
-        if (probe.payload !== undefined) {
-          parts.push(
-            `\n  ? ${probe.namespace} with ${JSON.stringify(probe.request)}: ` +
-              JSON.stringify(probe.payload),
-          );
+        if (probe.successes?.length > 0) {
+          for (const success of probe.successes) {
+            parts.push(
+              `\n  ? ${probe.namespace} with ${JSON.stringify(success.request)}: ` +
+                JSON.stringify(success.payload),
+            );
+          }
           continue;
         }
         if (probe.silent) {

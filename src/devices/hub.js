@@ -335,7 +335,7 @@ export async function onSetValue(client, { device, subDeviceId, kind, value }) {
       await client.request(device.uuid, NAMESPACE.HUB_TOGGLEX, METHOD.SET, {
         togglex: [{ id: subDeviceId, onoff, channel: 0 }],
       });
-      return onoff;
+      return confirmToggle(client, device, subDeviceId, onoff);
     }
 
     case FEATURE_KIND.TARGET_TEMPERATURE: {
@@ -354,6 +354,52 @@ export async function onSetValue(client, { device, subDeviceId, kind, value }) {
     default:
       throw new Error(`Feature ${kind} is read-only on sub-device ${subDeviceId}`);
   }
+}
+
+/** How long a sub-device is given to adopt a command before we read it back. */
+const SETTLE_DELAY_MS = 600;
+
+/**
+ * Read the sub-device back and return the state it ACTUALLY holds.
+ *
+ * A hub can accept a message — no error, no refusal — and the sub-device still
+ * not act on it. That is what a watering timer does with a plain on/off: the
+ * command is acknowledged and ignored. Publishing the REQUESTED value there
+ * makes Gladys show a switch that flips on and then falls back on the next
+ * poll, with nothing to explain why.
+ *
+ * So the requested value is never assumed: it is read back and the truth is
+ * published, with a warning naming the mismatch.
+ */
+async function confirmToggle(client, device, subDeviceId, requested) {
+  await new Promise((resolve) => setTimeout(resolve, SETTLE_DELAY_MS));
+
+  try {
+    // Force a fresh read: the coalescing window would otherwise return the
+    // state cached just before the command.
+    await client.refreshSubDeviceStates(device, { maxAgeMs: 0 });
+  } catch (err) {
+    // The command was accepted; only the verification failed. Report what was
+    // asked for rather than inventing a state.
+    logger.warn(`Could not read ${subDeviceId} back after the command`, err);
+    return requested;
+  }
+
+  const actual = device.subDevices?.get(subDeviceId)?.state?.togglex?.onoff;
+  if (actual === undefined) {
+    return requested;
+  }
+
+  const applied = Number(actual) === 1 ? 1 : 0;
+  if (applied !== requested) {
+    logger.warn(
+      `Sub-device ${subDeviceId} did not adopt on/off=${requested} (still ${applied}). ` +
+        `The hub accepted the message but the device ignored it — a watering timer, ` +
+        `for instance, cannot be started by a plain on/off.`,
+    );
+  }
+
+  return applied;
 }
 
 /**

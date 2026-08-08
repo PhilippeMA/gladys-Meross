@@ -201,7 +201,8 @@ test('probing never sends anything but a GET', async () => {
   };
 
   await client.probeNamespaces(device);
-  assert.deepEqual(methods, ['GET']);
+  assert.ok(methods.length > 0);
+  assert.deepEqual([...new Set(methods)], ['GET']);
 });
 
 test('a namespace that refuses every shape reports what was tried', async () => {
@@ -232,27 +233,34 @@ test('a namespace that refuses every shape reports what was tried', async () => 
   assert.match(result.attempts[0].error, /error 5000/);
 });
 
-test('probing stops at the first shape the device accepts', async () => {
-  // `{}` earns error 5000 on these namespaces; the shape carrying the key works.
+test('probing keeps going past an accepted but empty read', async () => {
+  // `{"latest":[]}` is accepted and comes back EMPTY: the key is right but the
+  // data is not there. Stopping at that first success would hide the shape that
+  // targets the sub-device by id — which is the informative one.
   const client = createCountingClient();
   const device = smartHub();
   device.ability['Appliance.Control.Water'] = {};
 
-  const seen = [];
   client.request = async (uuid, namespace, method, payload) => {
-    seen.push(payload);
     if (Object.keys(payload).length === 0) {
       throw new Error('Meross returned error 5000 for Appliance.Control.Water');
     }
-    return { water: [{ id: 'X', duration: 300 }] };
+    if (Array.isArray(payload.water) && payload.water.length === 0) {
+      return { water: [] };
+    }
+    return { water: [{ id: '0000C3D4', duration: 300 }] };
   };
 
   const [result] = await client.probeNamespaces(device);
 
-  assert.deepEqual(result.request, { water: [] });
-  assert.deepEqual(result.payload, { water: [{ id: 'X', duration: 300 }] });
-  // It must not keep probing once something worked.
-  assert.equal(seen.length, 2);
+  const requests = result.successes.map((s) => JSON.stringify(s.request));
+  assert.ok(requests.includes('{"water":[]}'), 'the empty read is reported');
+  assert.ok(
+    requests.includes('{"water":[{"id":"0000C3D4"}]}'),
+    'the targeted read must still be attempted',
+  );
+  const targeted = result.successes.find((s) => s.request.water?.[0]?.id === '0000C3D4');
+  assert.deepEqual(targeted.payload, { water: [{ id: '0000C3D4', duration: 300 }] });
 });
 
 test('a device advertising none of the probed namespaces is left alone', async () => {
@@ -302,7 +310,67 @@ test('a command the hub supports is still sent normally', async () => {
     value: 1,
   });
 
-  assert.deepEqual(client.reads, [NAMESPACE.HUB_TOGGLEX]);
+  // The command itself, then the read-back that verifies it.
+  assert.equal(client.reads[0], NAMESPACE.HUB_TOGGLEX);
+});
+
+// --- Confirming a command actually took effect -------------------------------
+
+test('a command the sub-device ignores reports the state it really holds', async () => {
+  // The hub accepts the message, the sub-device does nothing: a watering timer
+  // cannot be started by a plain on/off. Publishing the REQUESTED value would
+  // make the switch flip on and fall back on the next poll, unexplained.
+  const device = smartHub();
+  const client = createCountingClient();
+  // The valve stays off no matter what is asked.
+  device.subDevices.get('0000C3D4').state.togglex = { onoff: 0 };
+  client.refreshSubDeviceStates = async () => device.subDevices;
+
+  const applied = await hub.onSetValue(client, {
+    device,
+    subDeviceId: '0000C3D4',
+    kind: 'on-off',
+    value: 1,
+  });
+
+  assert.equal(applied, 0, 'the real state must win over the requested one');
+});
+
+test('a command the sub-device adopts reports the new state', async () => {
+  const device = smartHub();
+  const client = createCountingClient();
+  client.refreshSubDeviceStates = async () => {
+    device.subDevices.get('0000C3D4').state.togglex = { onoff: 1 };
+    return device.subDevices;
+  };
+
+  const applied = await hub.onSetValue(client, {
+    device,
+    subDeviceId: '0000C3D4',
+    kind: 'on-off',
+    value: 1,
+  });
+
+  assert.equal(applied, 1);
+});
+
+test('a failed read-back falls back to the requested value', async () => {
+  // The command WAS accepted; only the verification failed. Inventing a state
+  // would be worse than reporting what was asked for.
+  const device = smartHub();
+  const client = createCountingClient();
+  client.refreshSubDeviceStates = async () => {
+    throw new Error('hub unreachable');
+  };
+
+  const applied = await hub.onSetValue(client, {
+    device,
+    subDeviceId: '0000C3D4',
+    kind: 'on-off',
+    value: 1,
+  });
+
+  assert.equal(applied, 1);
 });
 
 test('a sub-device platform id survives the round trip', () => {

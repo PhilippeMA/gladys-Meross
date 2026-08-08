@@ -576,17 +576,22 @@ export class MerossClient {
     return Promise.all(
       advertised.map(async (namespace) => {
         const attempts = [];
+        const successes = [];
         const subDeviceIds = [...(device.subDevices?.keys() ?? [])];
 
         // A bare `{}` is rarely enough: most namespaces want their own key in
-        // the request too, and answer `error 5000` without it. Try the
-        // conventional shapes and report the first one that works.
+        // the request too, and answer `error 5000` without it.
+        //
+        // EVERY shape is tried, not just up to the first success: a read with an
+        // empty list is accepted and comes back empty, which tells us the key is
+        // right but nothing about the data. The shape targeting the sub-device by
+        // id is the interesting one, and it comes later.
         for (const payload of probePayloads(namespace, subDeviceIds)) {
           try {
             const reply = await this.request(device.uuid, namespace, METHOD.GET, payload, {
               timeoutMs: PROBE_TIMEOUT_MS,
             });
-            return { namespace, request: payload, payload: reply, attempts };
+            successes.push({ request: payload, payload: reply });
           } catch (err) {
             attempts.push({ request: payload, error: err.message });
 
@@ -599,7 +604,7 @@ export class MerossClient {
           }
         }
 
-        return { namespace, attempts };
+        return { namespace, successes, attempts };
       }),
     );
   }
