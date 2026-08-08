@@ -154,10 +154,13 @@ test('an error hidden in the payload is detected', () => {
   assert.equal(readPayloadError({ error: {} }), null);
 });
 
-test('payload keys are derived from the last namespace segment', () => {
-  assert.deepEqual(namespacePayloadKeys('Appliance.Control.Water'), ['water']);
-  // Meross spells some keys camelCase and others flat, so offer both.
-  assert.deepEqual(namespacePayloadKeys('Appliance.Digest.WaterPlan'), ['waterPlan', 'waterplan']);
+test('payload keys prefer what hardware confirmed, then a derivation', () => {
+  // Confirmed against real hardware: the watering namespaces do NOT name their
+  // key after the namespace, so a derived key would never have worked.
+  assert.deepEqual(namespacePayloadKeys('Appliance.Control.Water'), ['control']);
+  assert.deepEqual(namespacePayloadKeys('Appliance.Digest.WaterPlan'), ['digest']);
+  // Meross spells some derived keys camelCase and others flat, so offer both.
+  assert.deepEqual(namespacePayloadKeys('Appliance.Control.Electricity'), ['electricity']);
   // A trailing X marks the namespace revision, so the key without it is also a
   // candidate (`Sensor.LatestX` is read with a `latest` key).
   assert.deepEqual(namespacePayloadKeys('Appliance.Control.ToggleX'), [
@@ -165,11 +168,8 @@ test('payload keys are derived from the last namespace segment', () => {
     'togglex',
     'toggle',
   ]);
-  assert.deepEqual(namespacePayloadKeys('Appliance.Control.Sensor.LatestX'), [
-    'latestX',
-    'latestx',
-    'latest',
-  ]);
+  // Confirmed too: this one really is read with `latest`, X dropped.
+  assert.deepEqual(namespacePayloadKeys('Appliance.Control.Sensor.LatestX'), ['latest']);
 });
 
 test('a network failure is explained, not reported as "fetch failed"', () => {

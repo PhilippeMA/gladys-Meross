@@ -32,6 +32,7 @@ import {
   METHOD,
   NAMESPACE,
   toDeciUnit,
+  WATER_ONOFF,
 } from '../meross/protocol.js';
 import {
   normalizePollFrequency,
@@ -370,6 +371,17 @@ export function buildSubDeviceStates(sub) {
       featureKey: buildFeatureKey(FEATURE_KIND.WATERING_DURATION, 0),
       state: wateringDuration(sub),
     });
+
+    // `Appliance.Control.Water` is a PUSH namespace: the timer reports when a
+    // cycle starts and ends. That is the real state, better than the value we
+    // commanded — it also catches a watering started from the Meross app.
+    const onoff = Number(state.control?.onoff);
+    if (Number.isFinite(onoff)) {
+      states.push({
+        featureKey: buildFeatureKey(FEATURE_KIND.WATERING, 0),
+        state: onoff === WATER_ONOFF.START ? 1 : 0,
+      });
+    }
   }
 
   const battery = Number(state.battery?.value);

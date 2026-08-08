@@ -23,10 +23,13 @@ import { MerossMqttClient, TIMEOUT_ERROR_CODE } from './mqttClient.js';
 import { isReachable, localRequest } from './localClient.js';
 import {
   HUB_PAYLOAD_KEYS,
+  HUB_SUBID_PAYLOAD_KEYS,
   isHubNamespace,
+  isSubIdNamespace,
   METHOD,
   NAMESPACE,
   namespacePayloadKeys,
+  SUB_DEVICE_ID_KEY,
 } from './protocol.js';
 
 const logger = createLogger({ name: 'meross-client' });
@@ -76,14 +79,14 @@ const PROBE_TIMEOUT_MS = 6000;
  */
 export function probePayloads(namespace, subDeviceIds = []) {
   const payloads = [{}];
+  // Watering namespaces name the sub-device `subId`; hub namespaces use `id`.
+  // Getting this wrong is worth an `error 5000` and no data.
+  const idKey = isSubIdNamespace(namespace) ? SUB_DEVICE_ID_KEY : 'id';
 
   for (const key of namespacePayloadKeys(namespace)) {
-    // Hub namespaces all take an ARRAY of per-sub-device objects keyed by `id`.
-    // A watering timer is a sub-device, so its namespaces most likely follow the
-    // same convention — that is the shape worth trying before anything else.
     payloads.push({ [key]: [] });
     for (const id of subDeviceIds) {
-      payloads.push({ [key]: [{ id }] });
+      payloads.push({ [key]: [{ [idKey]: id }] });
     }
     payloads.push({ [key]: {} });
   }
@@ -496,6 +499,7 @@ export class MerossClient {
       throw new Error(
         `${namespace} only works over the local network and ${device.ip} did not answer ` +
           `(${err.message}). The Gladys container must be able to reach that address.`,
+        { cause: err },
       );
     }
   }
@@ -707,6 +711,11 @@ export class MerossClient {
       // Hub payloads are per SUB-DEVICE (keyed by `id`), not per channel:
       // merging them into the digest would corrupt it.
       mergeHubPayload(device, namespace, payload);
+    } else if (isSubIdNamespace(namespace)) {
+      // Same idea, but these name the sub-device `subId`. This is how a
+      // watering timer reports that a cycle started or ended — the only state
+      // feed it has, since the namespace cannot be polled from the cloud.
+      mergeSubIdPayload(device, namespace, payload);
     } else {
       mergeDigest(device, payload);
     }
@@ -803,6 +812,33 @@ export function mergeHubPayload(device, namespace, payload = {}) {
       sub.state[key] = mergeBlock(sub.state[key], rest);
     }
 
+    device.subDevices.set(id, sub);
+  }
+
+  return device.subDevices;
+}
+
+/**
+ * Merge a payload that targets sub-devices by `subId` (the watering family)
+ * into the sub-device state, under the namespace's own key.
+ */
+export function mergeSubIdPayload(device, namespace, payload = {}) {
+  const key = HUB_SUBID_PAYLOAD_KEYS[namespace];
+  const entries = payload?.[key];
+  if (!Array.isArray(entries)) {
+    return device.subDevices;
+  }
+
+  device.subDevices = device.subDevices ?? new Map();
+
+  for (const entry of entries) {
+    const id = String(entry?.[SUB_DEVICE_ID_KEY] ?? '');
+    if (!id) {
+      continue;
+    }
+    const sub = device.subDevices.get(id) ?? { id, name: id, type: '', state: {} };
+    const { [SUB_DEVICE_ID_KEY]: _ignored, ...rest } = entry;
+    sub.state[key] = mergeBlock(sub.state[key], rest);
     device.subDevices.set(id, sub);
   }
 

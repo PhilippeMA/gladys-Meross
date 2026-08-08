@@ -5,10 +5,11 @@
 
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { isHub, MerossClient, mergeHubPayload } from '../src/meross/client.js';
+import { isHub, MerossClient, mergeHubPayload, mergeSubIdPayload } from '../src/meross/client.js';
 import { HUB_PAYLOAD_KEYS, NAMESPACE } from '../src/meross/protocol.js';
 import { parseDeviceExternalId, subDevicePlatformId } from '../src/devices/featureIds.js';
 import * as hub from '../src/devices/hub.js';
+import { publishDeviceStates } from '../src/devices/index.js';
 import { powerPlug, smartHub, wateringTimer } from './helpers/merossFixtures.js';
 import { createFakeGladys } from './helpers/fakeGladys.js';
 
@@ -218,17 +219,17 @@ test('a namespace that refuses every shape reports what was tried', async () => 
 
   assert.equal(result.namespace, 'Appliance.Control.Water');
   assert.equal(result.payload, undefined);
-  // A bare read, then the hub convention (list, then list targeting the
-  // sub-device by id), then the object form.
+  // The confirmed key is `control`, and the sub-device is named `subId` —
+  // neither is derivable from the namespace, which is why probing had failed.
   assert.deepEqual(
     result.attempts.map((a) => a.request),
     [
       {},
-      { water: [] },
-      { water: [{ id: '0000A1B2' }] },
-      { water: [{ id: '0000C3D4' }] },
-      { water: [{ id: '0000E5F6' }] },
-      { water: {} },
+      { control: [] },
+      { control: [{ subId: '0000A1B2' }] },
+      { control: [{ subId: '0000C3D4' }] },
+      { control: [{ subId: '0000E5F6' }] },
+      { control: {} },
     ],
   );
   assert.match(result.attempts[0].error, /error 5000/);
@@ -246,22 +247,22 @@ test('probing keeps going past an accepted but empty read', async () => {
     if (Object.keys(payload).length === 0) {
       throw new Error('Meross returned error 5000 for Appliance.Control.Water');
     }
-    if (Array.isArray(payload.water) && payload.water.length === 0) {
-      return { water: [] };
+    if (Array.isArray(payload.control) && payload.control.length === 0) {
+      return { control: [] };
     }
-    return { water: [{ id: '0000C3D4', duration: 300 }] };
+    return { control: [{ subId: '0000C3D4', onoff: 1 }] };
   };
 
   const [result] = await client.probeNamespaces(device);
 
   const requests = result.successes.map((s) => JSON.stringify(s.request));
-  assert.ok(requests.includes('{"water":[]}'), 'the empty read is reported');
+  assert.ok(requests.includes('{"control":[]}'), 'the empty read is reported');
   assert.ok(
-    requests.includes('{"water":[{"id":"0000C3D4"}]}'),
+    requests.includes('{"control":[{"subId":"0000C3D4"}]}'),
     'the targeted read must still be attempted',
   );
-  const targeted = result.successes.find((s) => s.request.water?.[0]?.id === '0000C3D4');
-  assert.deepEqual(targeted.payload, { water: [{ id: '0000C3D4', duration: 300 }] });
+  const targeted = result.successes.find((s) => s.request.control?.[0]?.subId === '0000C3D4');
+  assert.deepEqual(targeted.payload, { control: [{ subId: '0000C3D4', onoff: 1 }] });
 });
 
 test('a device advertising none of the probed namespaces is left alone', async () => {
@@ -481,6 +482,45 @@ test('a hub that cannot water refuses the command instead of sending it', async 
       }),
     /does not support Appliance\.Control\.Water/,
   );
+});
+
+test('a watering push is recorded against the sub-device it names', async () => {
+  // `Appliance.Control.Water` is a PUSH namespace and targets `subId`, not the
+  // `id` every Appliance.Hub.* namespace uses. Routing it like a hub payload
+  // would drop it, and merging it into the digest would corrupt that.
+  const device = wateringHub();
+
+  mergeSubIdPayload(device, NAMESPACE.CONTROL_WATER, {
+    control: [{ subId: '1B0091AFC74E', onoff: 1, dura: 900 }],
+  });
+
+  const sub = device.subDevices.get('1B0091AFC74E');
+  assert.equal(sub.state.control.onoff, 1);
+  assert.equal(sub.state.control.dura, 900);
+  // The blocks it already had must survive.
+  assert.equal(sub.state.battery.value, 98);
+});
+
+test('the watering switch reflects the pushed state, not what we asked for', async () => {
+  const gladys = createFakeGladys();
+  const device = wateringHub();
+
+  // The timer reports a cycle in progress...
+  mergeSubIdPayload(device, NAMESPACE.CONTROL_WATER, {
+    control: [{ subId: '1B0091AFC74E', onoff: 1 }],
+  });
+  await publishDeviceStates(gladys, device);
+  let states = Object.fromEntries(gladys.published.map((p) => [p.featureExternalId, p.state]));
+  assert.equal(states[`meross:${device.uuid}-1B0091AFC74E:watering-0`], 1);
+
+  // ...then that it stopped. onoff 2 is "off", not a second "on".
+  gladys.published.length = 0;
+  mergeSubIdPayload(device, NAMESPACE.CONTROL_WATER, {
+    control: [{ subId: '1B0091AFC74E', onoff: 2 }],
+  });
+  await publishDeviceStates(gladys, device);
+  states = Object.fromEntries(gladys.published.map((p) => [p.featureExternalId, p.state]));
+  assert.equal(states[`meross:${device.uuid}-1B0091AFC74E:watering-0`], 0);
 });
 
 // --- Confirming a command actually took effect -------------------------------

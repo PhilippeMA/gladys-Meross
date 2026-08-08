@@ -129,6 +129,34 @@ export const HUB_PAYLOAD_KEYS = {
   [NAMESPACE.HUB_MTS100_MODE]: 'mode',
 };
 
+/**
+ * Namespaces that address a hub SUB-DEVICE without living under
+ * `Appliance.Hub.*`, and the payload key each one uses.
+ *
+ * They break both conventions at once, which is what made them unreadable by
+ * guesswork: `Appliance.Control.Water` carries a `control` array — not `water`
+ * after the namespace — and targets the sub-device by `subId`, not `id`.
+ *
+ * (Cross-checked against the meross_lan project, which drives the same
+ * hardware: https://github.com/krahabb/meross_lan)
+ */
+export const HUB_SUBID_PAYLOAD_KEYS = {
+  [NAMESPACE.CONTROL_WATER]: 'control',
+  'Appliance.Control.WaterEvent': 'control',
+  'Appliance.Control.WaterEvent.Skip': 'control',
+  'Appliance.Control.WaterPlan.Skip': 'control',
+  'Appliance.Digest.WaterPlan': 'digest',
+  'Appliance.Control.Sensor.LatestX': 'latest',
+};
+
+/** The key a namespace uses to name a sub-device: `subId` for these, `id` elsewhere. */
+export const SUB_DEVICE_ID_KEY = 'subId';
+
+/** True when a namespace addresses sub-devices by `subId`. */
+export function isSubIdNamespace(namespace) {
+  return namespace in HUB_SUBID_PAYLOAD_KEYS;
+}
+
 /** True for any `Appliance.Hub.*` namespace. */
 export function isHubNamespace(namespace) {
   return typeof namespace === 'string' && namespace.startsWith(HUB_NAMESPACE_PREFIX);
@@ -179,6 +207,12 @@ export function readPayloadError(payload) {
  * @returns {string[]} candidate keys, most likely first
  */
 export function namespacePayloadKeys(namespace) {
+  // A key confirmed against real hardware beats any derivation.
+  const known = HUB_SUBID_PAYLOAD_KEYS[namespace];
+  if (known) {
+    return [known];
+  }
+
   const last = String(namespace).split('.').pop() ?? '';
   if (!last) {
     return [];
