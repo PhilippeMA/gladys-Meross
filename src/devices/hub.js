@@ -25,8 +25,20 @@ import {
   DEVICE_FEATURE_TYPES,
   DEVICE_FEATURE_UNITS,
 } from '@gladysassistant/integration-sdk';
-import { fromDeciUnit, isHubNamespace, METHOD, NAMESPACE, toDeciUnit } from '../meross/protocol.js';
-import { normalizePollFrequency } from '../config.js';
+import {
+  buildWaterControlPayload,
+  fromDeciUnit,
+  isHubNamespace,
+  METHOD,
+  NAMESPACE,
+  toDeciUnit,
+} from '../meross/protocol.js';
+import {
+  normalizePollFrequency,
+  normalizeWateringDuration,
+  WATERING_DURATION_MAX,
+  WATERING_DURATION_MIN,
+} from '../config.js';
 import { buildFeatureKey, deviceIds, FEATURE_KIND, subDevicePlatformId } from './featureIds.js';
 
 const logger = createLogger({ name: 'hub' });
@@ -193,6 +205,36 @@ export function buildSubDeviceFeatures(sub, ids) {
     );
   }
 
+  if (isWateringTimer(sub)) {
+    features.push(
+      {
+        name: 'Watering',
+        external_id: ids.feature(buildFeatureKey(FEATURE_KIND.WATERING, 0)),
+        category: DEVICE_FEATURE_CATEGORIES.SWITCH,
+        type: DEVICE_FEATURE_TYPES.SWITCH.BINARY,
+        min: 0,
+        max: 1,
+        read_only: false,
+        // The timer never reports whether it is watering, so this state is what
+        // Gladys commanded, cleared automatically when the duration elapses.
+        has_feedback: false,
+        keep_history: true,
+      },
+      {
+        name: 'Watering duration',
+        external_id: ids.feature(buildFeatureKey(FEATURE_KIND.WATERING_DURATION, 0)),
+        category: DEVICE_FEATURE_CATEGORIES.DURATION,
+        type: DEVICE_FEATURE_TYPES.DURATION.INTEGER,
+        unit: DEVICE_FEATURE_UNITS.MINUTES,
+        min: WATERING_DURATION_MIN,
+        max: WATERING_DURATION_MAX,
+        read_only: false,
+        has_feedback: false,
+        keep_history: false,
+      },
+    );
+  }
+
   if (hasToggle(sub)) {
     features.push({
       // On a watering timer this switch is NOT a watering trigger: the device
@@ -323,6 +365,13 @@ export function buildSubDeviceStates(sub) {
     });
   }
 
+  if (isWateringTimer(sub)) {
+    states.push({
+      featureKey: buildFeatureKey(FEATURE_KIND.WATERING_DURATION, 0),
+      state: wateringDuration(sub),
+    });
+  }
+
   const battery = Number(state.battery?.value);
   if (Number.isFinite(battery)) {
     states.push({
@@ -336,12 +385,49 @@ export function buildSubDeviceStates(sub) {
 
 // --- Commands ----------------------------------------------------------------
 
-export async function onSetValue(client, { device, subDeviceId, kind, value }) {
+export async function onSetValue(client, { gladys, device, subDeviceId, kind, value, config }) {
   if (!subDeviceId) {
     throw new Error(`A hub feature must address a sub-device (${device.name})`);
   }
 
   switch (kind) {
+    case FEATURE_KIND.WATERING: {
+      const sub = device.subDevices?.get(subDeviceId);
+      const start = Number(value) === 1;
+      const minutes = wateringDuration(sub, config);
+
+      requireAbility(device, NAMESPACE.CONTROL_WATER, subDeviceId);
+      await client.request(
+        device.uuid,
+        NAMESPACE.CONTROL_WATER,
+        METHOD.SET,
+        buildWaterControlPayload({
+          subId: subDeviceId,
+          durationSeconds: minutes * 60,
+          start,
+        }),
+      );
+
+      logger.info(
+        start
+          ? `Watering started on ${subDeviceId} for ${minutes} min`
+          : `Watering stopped on ${subDeviceId}`,
+      );
+
+      scheduleWateringStop(gladys, device, subDeviceId, start ? minutes * 60 : 0);
+      return start ? 1 : 0;
+    }
+
+    case FEATURE_KIND.WATERING_DURATION: {
+      const minutes = normalizeWateringDuration(value);
+      const sub = device.subDevices?.get(subDeviceId);
+      if (sub) {
+        // Held per timer, so several timers can water for different lengths.
+        sub.wateringDurationMinutes = minutes;
+      }
+      return minutes;
+    }
+
     case FEATURE_KIND.ON_OFF: {
       const onoff = Number(value) === 1 ? 1 : 0;
       requireAbility(device, NAMESPACE.HUB_TOGGLEX, subDeviceId);
@@ -371,6 +457,48 @@ export async function onSetValue(client, { device, subDeviceId, kind, value }) {
 
 /** How long a sub-device is given to adopt a command before we read it back. */
 const SETTLE_DELAY_MS = 600;
+
+/** Watering duration for one timer: its own setting, else the integration default. */
+export function wateringDuration(sub, config) {
+  return normalizeWateringDuration(sub?.wateringDurationMinutes ?? config?.watering_duration);
+}
+
+/**
+ * Turn the Watering switch back off when the watering ends.
+ *
+ * The timer waters for `dura` seconds and stops by itself, but it never reports
+ * that it has: there is no watering state to read back. Without this the switch
+ * would stay on forever after a single watering. Starting a new watering — or
+ * stopping one — replaces the pending timer.
+ */
+function scheduleWateringStop(gladys, device, subDeviceId, durationSeconds) {
+  const sub = device.subDevices?.get(subDeviceId);
+  if (!sub) {
+    return;
+  }
+
+  clearTimeout(sub.wateringTimer);
+  sub.wateringTimer = undefined;
+
+  if (durationSeconds <= 0) {
+    return;
+  }
+
+  const externalId = deviceIds(gladys, subDevicePlatformId(device.uuid, subDeviceId)).feature(
+    buildFeatureKey(FEATURE_KIND.WATERING, 0),
+  );
+
+  sub.wateringTimer = setTimeout(() => {
+    sub.wateringTimer = undefined;
+    logger.info(`Watering finished on ${subDeviceId}`);
+    gladys
+      .publishState(externalId, 0)
+      .catch((err) => logger.error(`Could not clear the watering state of ${subDeviceId}`, err));
+  }, durationSeconds * 1000);
+
+  // Never keep the process alive just to clear a switch.
+  sub.wateringTimer.unref?.();
+}
 
 /**
  * Read the sub-device back and return the state it ACTUALLY holds.

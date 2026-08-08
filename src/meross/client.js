@@ -423,6 +423,7 @@ export class MerossClient {
         return await localRequest({
           ip: device.ip,
           key: this.session.key,
+          uuid: device.uuid,
           namespace,
           method,
           payload,

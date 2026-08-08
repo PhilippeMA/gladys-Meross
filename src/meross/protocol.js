@@ -59,7 +59,55 @@ export const NAMESPACE = {
   HUB_MTS100_ALL: 'Appliance.Hub.Mts100.All',
   HUB_MTS100_TEMPERATURE: 'Appliance.Hub.Mts100.Temperature',
   HUB_MTS100_MODE: 'Appliance.Hub.Mts100.Mode',
+
+  // Watering timers (MST100 behind an MSH400/MSH450 sprinkler hub).
+  CONTROL_WATER: 'Appliance.Control.Water',
 };
+
+/**
+ * Starting a watering, as captured from the Meross Android app:
+ *
+ *   POST http://<hub-ip>/config
+ *   namespace: Appliance.Control.Water, method: SET
+ *   { "control": [ { "channel": 0, "dura": 900, "onoff": 1, "subId": "<id>" } ] }
+ *
+ * Three details break every reasonable guess, which is why this namespace could
+ * not be reverse-engineered by probing:
+ *   - the payload key is `control`, NOT `water` after the namespace;
+ *   - the sub-device is addressed by `subId`, NOT by `id` like every hub
+ *     namespace;
+ *   - stopping uses onoff: 2, NOT 0. Sending 0 is not "stop".
+ * `dura` is the watering duration in SECONDS, and is omitted when stopping.
+ */
+export const WATER_ONOFF = {
+  START: 1,
+  STOP: 2,
+};
+
+/**
+ * Build the `Appliance.Control.Water` payload.
+ *
+ * @param {object} options
+ * @param {string} options.subId sub-device id of the timer
+ * @param {number} [options.channel]
+ * @param {number} [options.durationSeconds] required to start, omitted to stop
+ * @param {boolean} options.start
+ */
+export function buildWaterControlPayload({ subId, channel = 0, durationSeconds, start }) {
+  const entry = {
+    channel,
+    onoff: start ? WATER_ONOFF.START : WATER_ONOFF.STOP,
+    subId,
+  };
+
+  if (start) {
+    entry.dura = Math.round(durationSeconds);
+  }
+
+  // Field order mirrors the app's own request; harmless, but it keeps a capture
+  // diff readable when comparing against a future firmware.
+  return { control: [start ? { channel, dura: entry.dura, onoff: entry.onoff, subId } : entry] };
+}
 
 /** Prefix shared by every hub namespace. */
 export const HUB_NAMESPACE_PREFIX = 'Appliance.Hub.';
@@ -229,6 +277,7 @@ export function buildMessage({
   from = '',
   messageId = generateMessageId(),
   timestamp = Math.floor(Date.now() / 1000),
+  uuid,
 }) {
   return {
     header: {
@@ -239,6 +288,9 @@ export function buildMessage({
       from,
       timestamp,
       timestampMs: 0,
+      // Local requests from the app carry the target uuid; the signature does
+      // not cover it, so adding it is safe and matches the captured traffic.
+      ...(uuid ? { uuid } : {}),
       sign: signMessage(messageId, key, timestamp),
     },
     payload,

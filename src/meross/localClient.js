@@ -47,6 +47,7 @@ const DEFAULT_TIMEOUT_MS = 4000;
 export async function localRequest({
   ip,
   key,
+  uuid,
   namespace,
   method,
   payload = {},
@@ -56,7 +57,16 @@ export async function localRequest({
     throw new Error('No LAN address known for this device');
   }
 
-  const message = buildMessage({ namespace, method, payload, key });
+  // The Meross app sends `from` and `uuid` on local requests; mirroring it
+  // keeps us on the exact shape the firmware is known to accept.
+  const message = buildMessage({
+    namespace,
+    method,
+    payload,
+    key,
+    from: `http://${ip}/config`,
+    uuid,
+  });
 
   logger.debug(`LAN ${method} ${namespace} -> ${ip}`);
 

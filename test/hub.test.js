@@ -9,7 +9,8 @@ import { isHub, MerossClient, mergeHubPayload } from '../src/meross/client.js';
 import { HUB_PAYLOAD_KEYS, NAMESPACE } from '../src/meross/protocol.js';
 import { parseDeviceExternalId, subDevicePlatformId } from '../src/devices/featureIds.js';
 import * as hub from '../src/devices/hub.js';
-import { powerPlug, smartHub } from './helpers/merossFixtures.js';
+import { powerPlug, smartHub, wateringTimer } from './helpers/merossFixtures.js';
+import { createFakeGladys } from './helpers/fakeGladys.js';
 
 function emptyHub() {
   return smartHub({ subDevices: new Map() });
@@ -312,6 +313,143 @@ test('a command the hub supports is still sent normally', async () => {
 
   // The command itself, then the read-back that verifies it.
   assert.equal(client.reads[0], NAMESPACE.HUB_TOGGLEX);
+});
+
+// --- Watering (MST100) -------------------------------------------------------
+// These payloads are copied from a real capture of the Meross Android app
+// starting and stopping a watering. Every field matters and none is guessable,
+// so they are pinned exactly.
+
+function wateringHub() {
+  const device = smartHub({ subDevices: new Map([['1B0091AFC74E', wateringTimer()]]) });
+  device.ability[NAMESPACE.CONTROL_WATER] = {};
+  return device;
+}
+
+test('starting a watering sends the payload the app sends', async () => {
+  const device = wateringHub();
+  const client = createCountingClient();
+  const sent = [];
+  client.request = async (uuid, namespace, method, payload) => {
+    sent.push({ uuid, namespace, method, payload });
+    return {};
+  };
+
+  const applied = await hub.onSetValue(client, {
+    gladys: createFakeGladys(),
+    config: { watering_duration: 15 },
+    device,
+    subDeviceId: '1B0091AFC74E',
+    kind: 'watering',
+    value: 1,
+  });
+
+  assert.deepEqual(sent[0], {
+    uuid: device.uuid,
+    namespace: 'Appliance.Control.Water',
+    method: 'SET',
+    // dura is SECONDS, the sub-device is addressed by subId, and the key is
+    // `control` — not `water`.
+    payload: { control: [{ channel: 0, dura: 900, onoff: 1, subId: '1B0091AFC74E' }] },
+  });
+  assert.equal(applied, 1);
+});
+
+test('stopping a watering uses onoff 2 and omits the duration', async () => {
+  // Sending 0 is NOT "stop" on this namespace.
+  const device = wateringHub();
+  const client = createCountingClient();
+  const sent = [];
+  client.request = async (uuid, namespace, method, payload) => {
+    sent.push(payload);
+    return {};
+  };
+
+  const applied = await hub.onSetValue(client, {
+    gladys: createFakeGladys(),
+    config: { watering_duration: 15 },
+    device,
+    subDeviceId: '1B0091AFC74E',
+    kind: 'watering',
+    value: 0,
+  });
+
+  assert.deepEqual(sent[0], {
+    control: [{ channel: 0, onoff: 2, subId: '1B0091AFC74E' }],
+  });
+  assert.ok(!('dura' in sent[0].control[0]), 'no duration when stopping');
+  assert.equal(applied, 0);
+});
+
+test('a per-timer duration overrides the integration default', async () => {
+  const device = wateringHub();
+  const client = createCountingClient();
+  const sent = [];
+  client.request = async (uuid, namespace, method, payload) => {
+    sent.push(payload);
+    return {};
+  };
+
+  // The user sets 5 minutes on this timer...
+  const stored = await hub.onSetValue(client, {
+    gladys: createFakeGladys(),
+    config: { watering_duration: 15 },
+    device,
+    subDeviceId: '1B0091AFC74E',
+    kind: 'watering-duration',
+    value: 5,
+  });
+  assert.equal(stored, 5);
+
+  // ...and the next watering runs for 5 minutes, not the configured 15.
+  await hub.onSetValue(client, {
+    gladys: createFakeGladys(),
+    config: { watering_duration: 15 },
+    device,
+    subDeviceId: '1B0091AFC74E',
+    kind: 'watering',
+    value: 1,
+  });
+
+  assert.equal(sent[0].control[0].dura, 300);
+});
+
+test('an out-of-range duration is clamped rather than sent as-is', async () => {
+  const device = wateringHub();
+  const client = createCountingClient();
+  client.request = async () => ({});
+
+  assert.equal(
+    await hub.onSetValue(client, {
+      gladys: createFakeGladys(),
+      config: {},
+      device,
+      subDeviceId: '1B0091AFC74E',
+      kind: 'watering-duration',
+      value: 0,
+    }),
+    1,
+    'a zero-minute watering is not a watering',
+  );
+});
+
+test('a hub that cannot water refuses the command instead of sending it', async () => {
+  const device = smartHub({ subDevices: new Map([['1B0091AFC74E', wateringTimer()]]) });
+  // No Appliance.Control.Water on this hub.
+  const client = createCountingClient();
+
+  await assert.rejects(
+    () =>
+      hub.onSetValue(client, {
+        gladys: createFakeGladys(),
+        config: {},
+        device,
+        subDeviceId: '1B0091AFC74E',
+        kind: 'watering',
+        value: 1,
+      }),
+    /does not support Appliance\.Control\.Water/,
+  );
 });
 
 // --- Confirming a command actually took effect -------------------------------

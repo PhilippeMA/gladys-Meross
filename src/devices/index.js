@@ -212,7 +212,12 @@ export async function publishDeviceStates(gladys, device) {
  * acknowledgement and Gladys shows the failure to the user, instead of
  * pretending the light changed.
  */
-export async function handleSetValue(gladys, client, { device: gladysDevice, feature, value }) {
+export async function handleSetValue(
+  gladys,
+  client,
+  { device: gladysDevice, feature, value },
+  config,
+) {
   const { merossDevice, subDeviceId } = findMerossDevice(client, gladysDevice.external_id);
   const parsed = parseFeatureExternalId(feature.external_id);
   if (!parsed) {
@@ -225,6 +230,10 @@ export async function handleSetValue(gladys, client, { device: gladysDevice, fea
   }
 
   const applied = await kind.onSetValue(client, {
+    // A watering timer needs both: `gladys` to clear its switch when the
+    // watering ends, `config` for the default duration.
+    gladys,
+    config,
     device: merossDevice,
     subDeviceId,
     kind: parsed.kind,

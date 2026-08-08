@@ -34,6 +34,8 @@ export const FEATURE_KIND = {
   BATTERY: 'battery',
   LEAK: 'leak',
   OPENING: 'opening',
+  WATERING: 'watering',
+  WATERING_DURATION: 'watering-duration',
 };
 
 /**

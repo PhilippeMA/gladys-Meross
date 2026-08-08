@@ -540,11 +540,18 @@ test('a watering timer names its switch for what it actually does', () => {
 
   assert.deepEqual(
     timer.features.map((f) => f.name),
-    ['Timer enabled', 'Battery'],
+    ['Watering', 'Watering duration', 'Timer enabled', 'Battery'],
   );
   // Still controllable: it is a real state the device honours.
   assert.equal(feature(timer, 'on-off-0').read_only, false);
   assert.equal(feature(timer, 'battery-0').read_only, true);
+
+  // The watering duration is settable, in minutes.
+  const duration = feature(timer, 'watering-duration-0');
+  assert.equal(duration.unit, 'minutes');
+  assert.equal(duration.read_only, false);
+  assert.equal(duration.min, 1);
+  assert.equal(duration.max, 120);
 });
 
 test('a thermostatic valve keeps its plain On/Off name', () => {

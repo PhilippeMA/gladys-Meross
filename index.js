@@ -54,7 +54,7 @@ gladys.onSetValue(async (device, feature, value) => {
   // arriving and nothing else, whether it worked or was refused — which is
   // exactly the case that is hardest to diagnose.
   try {
-    await handleSetValue(gladys, client, { device, feature, value });
+    await handleSetValue(gladys, client, { device, feature, value }, config);
     logger.info(`onSetValue -> ${feature.external_id} applied`);
   } catch (err) {
     logger.error(`onSetValue -> ${feature.external_id} FAILED: ${err.message}`);

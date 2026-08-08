@@ -83,6 +83,19 @@
         { "value": "2000", "label": { "en": "Every 2 seconds", "fr": "Toutes les 2 secondes" } },
         { "value": "1000", "label": { "en": "Every second", "fr": "Chaque seconde" } }
       ]
+    },
+    {
+      "key": "watering_duration",
+      "type": "number",
+      "label": { "en": "Watering duration (min)", "fr": "Durée d'arrosage (min)" },
+      "description": {
+        "en": "How long a watering runs when started from Gladys. Each timer can override it from its own Watering duration setting.",
+        "fr": "Durée d'un arrosage lancé depuis Gladys. Chaque programmateur peut la remplacer via son propre réglage « Watering duration »."
+      },
+      "required": false,
+      "default": 15,
+      "min": 1,
+      "max": 120
     }
   ],
   "actions": [

@@ -30,13 +30,13 @@ A hub owns nothing the user can act on — it is a gateway. So the hub itself is
 published: each sub-device paired to it becomes its own Gladys device, with the name chosen
 in the Meross app.
 
-| Sub-device         | Typical models | Features in Gladys                                    |
-| ------------------ | -------------- | ----------------------------------------------------- |
-| Thermometer        | MS100          | Temperature, humidity, battery                        |
-| Thermostatic valve | MTS100, MTS150 | Target temperature, room temperature, on/off, battery |
-| Water leak sensor  | MS400, MS405   | Leak detected, battery                                |
-| Door/window sensor | MS200          | Opening, battery                                      |
-| Watering timer     | MST100         | Timer enabled, battery — see the limitation below     |
+| Sub-device         | Typical models | Features in Gladys                                       |
+| ------------------ | -------------- | -------------------------------------------------------- |
+| Thermometer        | MS100          | Temperature, humidity, battery                           |
+| Thermostatic valve | MTS100, MTS150 | Target temperature, room temperature, on/off, battery    |
+| Water leak sensor  | MS400, MS405   | Leak detected, battery                                   |
+| Door/window sensor | MS200          | Opening, battery                                         |
+| Watering timer     | MST100         | Watering (start/stop + duration), timer enabled, battery |
 
 Sub-device features are derived from the **data a sub-device actually reports**, with its
 type only as a fallback hint: hub generations name their types inconsistently, but they all
@@ -49,36 +49,28 @@ wrong mapping would mislabel the modes in the UI.
 
 #### Watering timers (MST100 on an MSH400 sprinkler hub)
 
-Battery and on/off state are read correctly, and the command is accepted and adopted by the
-device. **But it does not start a watering** — on a sprinkler timer, on/off is not a watering
-trigger. The feature is therefore named **Timer enabled** rather than On/Off: it is a real,
-working control, just not the one the name "On/Off" would suggest.
+A sprinkler timer is not a relay: its `Appliance.Hub.ToggleX` is accepted and adopted by the
+device but waters nothing. Watering runs through `Appliance.Control.Water`, whose payload
+defeats every reasonable guess — which is why it had to come from a capture of the Meross
+Android app rather than from probing:
 
-Everything below was established against real hardware (MSH400 + MST100), and it is where
-the investigation stopped:
+```json
+{ "control": [{ "channel": 0, "dura": 900, "onoff": 1, "subId": "1B0091AFC74E" }] }
+```
 
-| What was tried                         | Result                                          |
-| -------------------------------------- | ----------------------------------------------- |
-| `Appliance.Hub.ToggleX` SET            | Accepted, adopted, no watering                  |
-| `Appliance.Control.Water` GET          | `error 5000` on every plausible payload shape   |
-| `Appliance.Digest.WaterPlan` GET       | `error 5000` on every shape                     |
-| `Appliance.Config.WaterPlan` GET       | `error 5000` on every shape                     |
-| `Appliance.Control.WaterEvent` GET     | No answer at all                                |
-| `Appliance.Control.Sensor.LatestX` GET | Answers — `{"latest":[]}`, empty even by sub-id |
+- the payload key is **`control`**, not `water` after the namespace;
+- the sub-device is addressed by **`subId`**, not by `id` like every hub namespace;
+- **stopping uses `onoff: 2`**, not `0`. Sending `0` is not "stop";
+- `dura` is the duration in **seconds**, and is omitted when stopping.
 
-Shapes tried per namespace: a bare `{}`, then the namespace key as an object, as an array,
-and as an array targeting the sub-device by `id` (the convention every other hub namespace
-follows), in both the camelCase and flat spellings.
+A timer therefore exposes a **Watering** switch and a **Watering duration** (minutes,
+per timer, defaulting to the integration-wide setting). The timer never reports whether it
+is watering, so the switch carries what Gladys commanded and is cleared automatically when
+the duration elapses — otherwise it would stay on forever after one watering.
 
-So the hub advertises the watering family but does not serve it over the MQTT channel this
-integration uses, and the one namespace that does answer holds no watering data. Starting a
-watering needs a namespace and payload that are not publicly documented — `meross_iot` does
-not know them either.
-
-**To go further**, the reliable route is to capture the Meross mobile app's traffic
-(mitmproxy) during a manual watering and read the request it sends. The **Diagnose my
-devices** action re-runs all of the probes above, so a firmware update that opens these
-namespaces would show up there.
+`Appliance.Control.Water` refuses every GET (`error 5000`), so there is no watering state to
+read back, and `Appliance.Control.WaterEvent` never answers. Schedules
+(`Digest.WaterPlan`, `Config.WaterPlan`) are equally unreadable and are not exposed.
 
 ## How it works
 

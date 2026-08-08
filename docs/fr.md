@@ -30,7 +30,7 @@ vous lui avez donné dans l'application Meross.
 | Vanne thermostatique (MTS100/150) | Température de consigne, température ambiante, marche/arrêt, batterie |
 | Détecteur de fuite (MS400)        | Fuite détectée, niveau de batterie                                    |
 | Capteur d'ouverture (MS200)       | Ouverture, niveau de batterie                                         |
-| Programmateur d'arrosage (MST100) | « Timer enabled » et batterie — voir la limitation ci-dessous         |
+| Programmateur d'arrosage (MST100) | Lancer un arrosage, régler sa durée, batterie                         |
 
 Si votre hub semble ne rien faire, vérifiez qu'au moins un capteur lui est **appairé dans
 l'application Meross** : un hub sans capteur n'a rien à afficher. Le bouton **Diagnostiquer
@@ -39,19 +39,22 @@ mes appareils** liste ce que l'intégration a trouvé derrière lui.
 Le _mode_ des vannes (confort, éco, programmation) n'est pas encore disponible — seulement la
 température de consigne, qui est l'essentiel pour les automatisations.
 
-#### Les programmateurs d'arrosage ne peuvent pas encore être déclenchés
+#### Programmateurs d'arrosage
 
-Si vous avez un programmateur d'arrosage MST100 sur un hub MSH400, vous obtenez son **niveau
-de batterie** et un interrupteur **« Timer enabled »**, et les deux fonctionnent. Cet
-interrupteur pilote réellement l'appareil — mais il **ne déclenche pas d'arrosage** : sur un
-programmateur, marche/arrêt n'est pas une commande d'arrosage. D'où ce nom plutôt que
-« On/Off ». Vous pouvez le renommer dans Gladys si vous préférez un libellé français.
+Un programmateur MST100 sur un hub MSH400 vous donne un interrupteur **« Watering »**, une
+durée **« Watering duration »** en minutes, son état **« Timer enabled »** et son **niveau de
+batterie**.
 
-Meross n'expose pas les commandes d'arrosage sur le canal utilisé par cette intégration : le
-hub les annonce, puis refuse toute lecture. Déclencher un arrosage depuis Gladys n'est donc
-pas possible aujourd'hui. Tout ce qui a été testé est listé dans le README du projet, et le
-bouton **Diagnostiquer mes appareils** rejoue ces tests — si une mise à jour du firmware
-ouvre l'accès, cela apparaîtra là.
+Activez **Watering** et le programmateur arrose pendant la durée réglée, puis s'arrête tout
+seul — exactement comme le bouton « arroser maintenant » de l'application Meross. Désactivez-le
+pour arrêter avant la fin. L'interrupteur se remet à zéro quand l'arrosage se termine.
+
+La durée est propre à chaque programmateur : réglez-la sur l'appareil, ou définissez une
+valeur par défaut pour tous dans la configuration de l'intégration. Elle revient à cette
+valeur par défaut au redémarrage de l'intégration.
+
+Les **programmations** d'arrosage restent dans l'application Meross : le hub n'en autorise ni
+la lecture ni la modification depuis l'extérieur.
 
 ## Configuration
 

@@ -28,7 +28,7 @@ in Gladys — **each sensor paired to it does**, under the name you gave it in t
 | Thermostatic valve (MTS100/150) | Target temperature, room temperature, on/off, battery |
 | Water leak sensor (MS400)       | Leak detected, battery level                          |
 | Door/window sensor (MS200)      | Opening, battery level                                |
-| Watering timer (MST100)         | Timer enabled, battery — see the limitation below     |
+| Watering timer (MST100)         | Start a watering, set its duration, battery           |
 
 If your hub appears to do nothing, check that at least one sensor is **paired to it in the
 Meross app**: a hub with nothing paired has nothing to show. The **Diagnose my devices**
@@ -37,18 +37,20 @@ button lists what the integration found behind it.
 The valve _mode_ (comfort, economy, schedule) is not available yet — only the target
 temperature, which is what automations need most.
 
-#### Watering timers cannot be triggered yet
+#### Watering timers
 
-If you have an MST100 watering timer on an MSH400 hub, you get its **battery level** and a
-**Timer enabled** switch, and both work. That switch really does control the device — but it
-does **not start a watering**: on a sprinkler timer, on/off is not a watering trigger. It is
-named "Timer enabled" for exactly that reason.
+An MST100 watering timer on an MSH400 hub gives you a **Watering** switch, a **Watering
+duration** in minutes, its **Timer enabled** state and its **battery level**.
 
-Meross does not expose the watering commands over the channel this integration uses: the hub
-announces them, then refuses every read. Triggering a watering from Gladys is therefore not
-possible today. Everything that was tested is listed in the project README, and the
-**Diagnose my devices** button re-runs those tests — so if a firmware update opens things up,
-it will show there.
+Turn **Watering** on and the timer waters for the duration you set, then stops by itself —
+exactly like the "water now" button in the Meross app. Turn it off to stop early. The switch
+clears itself when the watering ends.
+
+The duration is per timer: set it on the device, or set a default for all of them in the
+integration configuration. It resets to that default when the integration restarts.
+
+Watering **schedules** stay in the Meross app: the hub does not let anything else read or
+change them.
 
 ## Configuration
 
