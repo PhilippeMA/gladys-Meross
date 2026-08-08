@@ -30,6 +30,7 @@ vous lui avez donné dans l'application Meross.
 | Vanne thermostatique (MTS100/150) | Température de consigne, température ambiante, marche/arrêt, batterie |
 | Détecteur de fuite (MS400)        | Fuite détectée, niveau de batterie                                    |
 | Capteur d'ouverture (MS200)       | Ouverture, niveau de batterie                                         |
+| Programmateur d'arrosage (MST100) | Batterie et état marche/arrêt — voir la limitation ci-dessous         |
 
 Si votre hub semble ne rien faire, vérifiez qu'au moins un capteur lui est **appairé dans
 l'application Meross** : un hub sans capteur n'a rien à afficher. Le bouton **Diagnostiquer
@@ -37,6 +38,19 @@ mes appareils** liste ce que l'intégration a trouvé derrière lui.
 
 Le _mode_ des vannes (confort, éco, programmation) n'est pas encore disponible — seulement la
 température de consigne, qui est l'essentiel pour les automatisations.
+
+#### Les programmateurs d'arrosage ne peuvent pas encore être déclenchés
+
+Si vous avez un programmateur d'arrosage MST100 sur un hub MSH400, vous obtenez son **niveau
+de batterie** et son **état marche/arrêt**, et ils fonctionnent. L'interrupteur est bien
+accepté par l'appareil — mais il **ne déclenche pas d'arrosage** : sur un programmateur,
+marche/arrêt n'est pas une commande d'arrosage.
+
+Meross n'expose pas les commandes d'arrosage sur le canal utilisé par cette intégration : le
+hub les annonce, puis refuse toute lecture. Déclencher un arrosage depuis Gladys n'est donc
+pas possible aujourd'hui. Tout ce qui a été testé est listé dans le README du projet, et le
+bouton **Diagnostiquer mes appareils** rejoue ces tests — si une mise à jour du firmware
+ouvre l'accès, cela apparaîtra là.
 
 ## Configuration
 

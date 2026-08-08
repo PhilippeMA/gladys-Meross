@@ -46,6 +46,38 @@ sub-device that reports nothing usable is skipped with a log line naming its raw
 target temperature. The numeric mode scale Gladys expects could not be confirmed, and a
 wrong mapping would mislabel the modes in the UI.
 
+#### Watering timers (MST100 on an MSH400 sprinkler hub)
+
+Battery and on/off state are read correctly, and the on/off command is accepted and adopted
+by the device. **But it does not start a watering** — on a sprinkler timer, on/off is not a
+watering trigger.
+
+Everything below was established against real hardware (MSH400 + MST100), and it is where
+the investigation stopped:
+
+| What was tried                         | Result                                          |
+| -------------------------------------- | ----------------------------------------------- |
+| `Appliance.Hub.ToggleX` SET            | Accepted, adopted, no watering                  |
+| `Appliance.Control.Water` GET          | `error 5000` on every plausible payload shape   |
+| `Appliance.Digest.WaterPlan` GET       | `error 5000` on every shape                     |
+| `Appliance.Config.WaterPlan` GET       | `error 5000` on every shape                     |
+| `Appliance.Control.WaterEvent` GET     | No answer at all                                |
+| `Appliance.Control.Sensor.LatestX` GET | Answers — `{"latest":[]}`, empty even by sub-id |
+
+Shapes tried per namespace: a bare `{}`, then the namespace key as an object, as an array,
+and as an array targeting the sub-device by `id` (the convention every other hub namespace
+follows), in both the camelCase and flat spellings.
+
+So the hub advertises the watering family but does not serve it over the MQTT channel this
+integration uses, and the one namespace that does answer holds no watering data. Starting a
+watering needs a namespace and payload that are not publicly documented — `meross_iot` does
+not know them either.
+
+**To go further**, the reliable route is to capture the Meross mobile app's traffic
+(mitmproxy) during a manual watering and read the request it sends. The **Diagnose my
+devices** action re-runs all of the probes above, so a firmware update that opens these
+namespaces would show up there.
+
 ## How it works
 
 ```
