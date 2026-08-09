@@ -48,9 +48,13 @@ Activez **Watering** et le programmateur arrose pendant la durée réglée, puis
 seul — exactement comme le bouton « arroser maintenant » de l'application Meross. Désactivez-le
 pour arrêter avant la fin. L'interrupteur se remet à zéro quand l'arrosage se termine.
 
-La durée est propre à chaque programmateur : réglez-la sur l'appareil, ou définissez une
-valeur par défaut pour tous dans la configuration de l'intégration. Gladys lit la durée que
-le programmateur a lui-même mémorisée, elle survit donc à un redémarrage.
+La durée affichée est **celle réglée sur le programmateur lui-même** — la même que dans
+l'application Meross. La modifier depuis Gladys l'écrit sur l'appareil, donc l'application
+verra le changement, et inversement. Il n'y a qu'une seule valeur et elle appartient au
+matériel : Gladys ne lance jamais un arrosage avec une durée de son cru.
+
+Tant que le programmateur n'a rien communiqué, la durée reste vide plutôt qu'affichée avec
+une valeur inventée.
 
 Gladys parle à votre hub en direct sur votre réseau local quand il est joignable, et via les
 serveurs Meross sinon. Si l'arrosage échoue, le message d'erreur nomme les deux canaux et

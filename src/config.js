@@ -36,7 +36,6 @@ export const DEFAULT_CONFIG = {
   poll_frequency: DEFAULT_POLL_FREQUENCY,
   // Minutes. How long a manual watering runs when started from Gladys; each
   // timer can be given its own value from its "Watering duration" feature.
-  watering_duration: 15,
   // Reserved key (NOT in config_schema): the manifest declares both 'local' and
   // 'cloud' in `transports`, so Gladys shows a "Prefer the local connection"
   // toggle and sends the choice here. Read-only for the integration.
@@ -57,7 +56,6 @@ export function normalizeConfig(raw = {}) {
     // The select stores a string; the device payload needs the number, and it
     // must be one Gladys knows.
     poll_frequency: normalizePollFrequency(raw.poll_frequency),
-    watering_duration: normalizeWateringDuration(raw.watering_duration),
     // A boolean: anything but an explicit false means true.
     GLADYS_PREFER_LOCAL: raw.GLADYS_PREFER_LOCAL !== false,
   };
@@ -83,18 +81,29 @@ export function normalizePollFrequency(value) {
   );
 }
 
-/** Bounds of a manual watering, in minutes. */
+/**
+ * Bounds of a watering duration, in minutes.
+ *
+ * The ceiling is a day, matching what `meross_lan` allows (86400 s). It is not
+ * this integration's place to decide someone waters for less than four hours:
+ * clamping a duration the device really holds would MISREPORT it, and this
+ * value is now read from the hardware rather than invented here.
+ */
 export const WATERING_DURATION_MIN = 1;
-export const WATERING_DURATION_MAX = 120;
+export const WATERING_DURATION_MAX = 1440;
 
 /**
  * Clamp a watering duration into something a timer will accept. A zero or
- * negative duration would be sent as `dura: 0`, which is not a watering.
+ * negative duration would be written as `dura: 0`, which is not a watering.
+ *
+ * Returns null for anything unreadable rather than substituting a default: the
+ * duration belongs to the device, and inventing one here is exactly how Gladys
+ * came to overwrite the value its owner had set in the Meross app.
  */
 export function normalizeWateringDuration(value) {
   const minutes = Math.round(Number(value));
   if (!Number.isFinite(minutes)) {
-    return DEFAULT_CONFIG.watering_duration;
+    return null;
   }
   return Math.max(WATERING_DURATION_MIN, Math.min(WATERING_DURATION_MAX, minutes));
 }

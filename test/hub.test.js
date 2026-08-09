@@ -344,7 +344,6 @@ test('a watering goes through the normal channel, cloud included', async () => {
 
   await hub.onSetValue(client, {
     gladys: createFakeGladys(),
-    config: { watering_duration: 15 },
     device,
     subDeviceId: '1B0091AFC74E',
     kind: 'watering',
@@ -354,7 +353,11 @@ test('a watering goes through the normal channel, cloud included', async () => {
   assert.deepEqual(sent, ['Appliance.Control.Water']);
 });
 
-test('starting a watering sends the payload the app sends', async () => {
+test('starting a watering carries no duration of its own', async () => {
+  // The app's captured request has a `dura`, and reproducing it OVERRIDES the
+  // duration configured on the timer for that cycle. That is how this
+  // integration came to overwrite its owner's setting with an invented default.
+  // Left out, the timer waters for as long as it is configured to.
   const device = wateringHub();
   const client = createCountingClient();
   const sent = [];
@@ -365,7 +368,6 @@ test('starting a watering sends the payload the app sends', async () => {
 
   const applied = await hub.onSetValue(client, {
     gladys: createFakeGladys(),
-    config: { watering_duration: 15 },
     device,
     subDeviceId: '1B0091AFC74E',
     kind: 'watering',
@@ -376,9 +378,9 @@ test('starting a watering sends the payload the app sends', async () => {
     uuid: device.uuid,
     namespace: 'Appliance.Control.Water',
     method: 'SET',
-    // dura is SECONDS, the sub-device is addressed by subId, and the key is
-    // `control` — not `water`.
-    payload: { control: [{ channel: 0, dura: 900, onoff: 1, subId: '1B0091AFC74E' }] },
+    // The sub-device is addressed by subId, and the key is `control`, not
+    // `water`. No `dura`.
+    payload: { control: [{ channel: 0, onoff: 1, subId: '1B0091AFC74E' }] },
   });
   assert.equal(applied, 1);
 });
@@ -395,7 +397,6 @@ test('stopping a watering uses onoff 2 and omits the duration', async () => {
 
   const applied = await hub.onSetValue(client, {
     gladys: createFakeGladys(),
-    config: { watering_duration: 15 },
     device,
     subDeviceId: '1B0091AFC74E',
     kind: 'watering',
@@ -409,8 +410,61 @@ test('stopping a watering uses onoff 2 and omits the duration', async () => {
   assert.equal(applied, 0);
 });
 
-test('a per-timer duration overrides the integration default', async () => {
+test('setting the duration writes it to the timer, not to a local variable', async () => {
+  // The whole point of the change: one duration, held by the device, edited by
+  // the Meross app and by Gladys through the same field. A private copy here is
+  // what made the two disagree.
   const device = wateringHub();
+  device.ability['Appliance.Config.DeviceCfg'] = {};
+  const client = createCountingClient();
+  const sent = [];
+  client.request = async (uuid, namespace, method, payload) => {
+    sent.push({ namespace, method, payload });
+    return {};
+  };
+
+  const applied = await hub.onSetValue(client, {
+    gladys: createFakeGladys(),
+    device,
+    subDeviceId: '1B0091AFC74E',
+    kind: 'watering-duration',
+    value: 5,
+  });
+
+  assert.equal(applied, 5);
+  assert.deepEqual(sent, [
+    {
+      namespace: 'Appliance.Config.DeviceCfg',
+      method: 'SET',
+      // Seconds, under the model's own config group.
+      payload: { config: [{ channel: 0, subId: '1B0091AFC74E', mstCfg: { dura: 300 } }] },
+    },
+  ]);
+  // And reflected locally so the feature does not snap back before the next poll.
+  assert.equal(hub.wateringDuration(device.subDevices.get('1B0091AFC74E')), 5);
+});
+
+test('a hub that cannot configure the timer says so rather than pretending', async () => {
+  const device = wateringHub();
+  delete device.ability['Appliance.Config.DeviceCfg'];
+  const client = createCountingClient();
+
+  await assert.rejects(
+    () =>
+      hub.onSetValue(client, {
+        gladys: createFakeGladys(),
+        device,
+        subDeviceId: '1B0091AFC74E',
+        kind: 'watering-duration',
+        value: 5,
+      }),
+    /does not support Appliance\.Config\.DeviceCfg/,
+  );
+});
+
+test('an out-of-range duration is clamped rather than sent as-is', async () => {
+  const device = wateringHub();
+  device.ability['Appliance.Config.DeviceCfg'] = {};
   const client = createCountingClient();
   const sent = [];
   client.request = async (uuid, namespace, method, payload) => {
@@ -418,39 +472,9 @@ test('a per-timer duration overrides the integration default', async () => {
     return {};
   };
 
-  // The user sets 5 minutes on this timer...
-  const stored = await hub.onSetValue(client, {
-    gladys: createFakeGladys(),
-    config: { watering_duration: 15 },
-    device,
-    subDeviceId: '1B0091AFC74E',
-    kind: 'watering-duration',
-    value: 5,
-  });
-  assert.equal(stored, 5);
-
-  // ...and the next watering runs for 5 minutes, not the configured 15.
-  await hub.onSetValue(client, {
-    gladys: createFakeGladys(),
-    config: { watering_duration: 15 },
-    device,
-    subDeviceId: '1B0091AFC74E',
-    kind: 'watering',
-    value: 1,
-  });
-
-  assert.equal(sent[0].control[0].dura, 300);
-});
-
-test('an out-of-range duration is clamped rather than sent as-is', async () => {
-  const device = wateringHub();
-  const client = createCountingClient();
-  client.request = async () => ({});
-
   assert.equal(
     await hub.onSetValue(client, {
       gladys: createFakeGladys(),
-      config: {},
       device,
       subDeviceId: '1B0091AFC74E',
       kind: 'watering-duration',
@@ -459,6 +483,7 @@ test('an out-of-range duration is clamped rather than sent as-is', async () => {
     1,
     'a zero-minute watering is not a watering',
   );
+  assert.equal(sent[0].config[0].mstCfg.dura, 60);
 });
 
 test('a hub that cannot water refuses the command instead of sending it', async () => {
@@ -545,7 +570,6 @@ test('a watering the cloud swallows is retried on the LAN', async () => {
 
   const applied = await hub.onSetValue(client, {
     gladys: createFakeGladys(),
-    config: { watering_duration: 15 },
     device,
     subDeviceId: '1B0091AFC74E',
     kind: 'watering',
@@ -555,7 +579,7 @@ test('a watering the cloud swallows is retried on the LAN', async () => {
   assert.equal(applied, 1);
   assert.equal(lan.length, 1);
   assert.deepEqual(lan[0].payload, {
-    control: [{ channel: 0, dura: 900, onoff: 1, subId: '1B0091AFC74E' }],
+    control: [{ channel: 0, onoff: 1, subId: '1B0091AFC74E' }],
   });
 });
 
@@ -619,28 +643,44 @@ test('when neither channel works the error names both failures', async () => {
   );
 });
 
-test('the duration comes from the timer itself before the config default', async () => {
-  // The timer remembers the last duration it was given, and reports it as
-  // `dura` in seconds. Preferring it means the duration shown in Gladys is the
-  // one the hardware will actually use, and it survives a restart — the
-  // per-timer override lives in memory only.
+test('the duration is read from the device, never invented', async () => {
+  // Two different `dura` fields exist, and only one is the setting:
+  // Config.DeviceCfg holds what the Meross app edits, Control.Water holds the
+  // length of the last cycle. Reading the second as the first made Gladys
+  // report back whatever it had last sent.
   const device = wateringHub();
   const sub = device.subDevices.get('1B0091AFC74E');
 
-  assert.equal(hub.wateringDuration(sub, { watering_duration: 15 }), 15, 'nothing read yet');
+  assert.equal(hub.wateringDuration(sub), null, 'nothing read yet, so nothing claimed');
 
+  // Only a past cycle known: better than nothing, and honest about its origin.
   mergeSubIdPayload(device, NAMESPACE.CONTROL_WATER, {
     control: [{ subId: '1B0091AFC74E', onoff: 2, dura: 900 }],
   });
-  assert.equal(hub.wateringDuration(sub, { watering_duration: 5 }), 15, 'the timer wins');
+  assert.equal(hub.wateringDuration(sub), 15);
 
-  // ...but an explicit choice by the user still wins over the hardware, or
-  // changing the duration in Gladys would be undone by the next poll.
-  sub.wateringDurationMinutes = 7;
-  assert.equal(hub.wateringDuration(sub, { watering_duration: 5 }), 7);
+  // The configured value wins as soon as the device reports it.
+  mergeSubIdPayload(device, NAMESPACE.CONFIG_DEVICECFG, {
+    config: [{ subId: '1B0091AFC74E', channel: 0, mstCfg: { dura: 1200 } }],
+  });
+  assert.equal(hub.wateringDuration(sub), 20);
 });
 
-// --- Confirming a command actually took effect -------------------------------
+test('an unknown duration is left unpublished rather than filled in', async () => {
+  // A device that has told us nothing gets no duration state at all. Publishing
+  // a default here is what let Gladys present its own number as the timer's.
+  const gladys = createFakeGladys();
+  const device = wateringHub();
+
+  await publishDeviceStates(gladys, device);
+  const keys = gladys.published.map((p) => p.featureExternalId);
+
+  assert.equal(
+    keys.some((key) => key.endsWith(':watering-duration-0')),
+    false,
+  );
+  assert.ok(keys.some((key) => key.endsWith(':battery-0')));
+});
 
 test('a command the sub-device ignores reports the state it really holds', async () => {
   // The hub accepts the message, the sub-device does nothing: a watering timer
@@ -726,6 +766,10 @@ test('the watering command logs the exact message and the exact answer', async (
   const client = createCountingClient();
   client.request = async () => ({ control: [{ subId: '1B0091AFC74E', onoff: 1, dura: 900 }] });
 
+  mergeSubIdPayload(device, NAMESPACE.CONFIG_DEVICECFG, {
+    config: [{ subId: '1B0091AFC74E', channel: 0, mstCfg: { dura: 1200 } }],
+  });
+
   const lines = [];
   const originalInfo = console.info;
   const originalLog = console.log;
@@ -736,7 +780,6 @@ test('the watering command logs the exact message and the exact answer', async (
   try {
     await hub.onSetValue(client, {
       gladys: createFakeGladys(),
-      config: { watering_duration: 15 },
       device,
       subDeviceId: '1B0091AFC74E',
       kind: 'watering',
@@ -748,9 +791,12 @@ test('the watering command logs the exact message and the exact answer', async (
   }
 
   const all = lines.join('\n');
-  assert.match(all, /LAN 192\.168\.50\.24/, 'the channel actually used');
-  assert.match(all, /"dura":900/, 'the payload verbatim');
-  assert.match(all, /timer enabled: 0/, 'the state the timer was in');
+  const request = lines.find((line) => line.includes('Watering command over'));
+
+  assert.match(request, /LAN 192\.168\.50\.24/, 'the channel actually used');
+  assert.match(request, /"onoff":1/, 'the payload verbatim');
+  assert.equal(/"dura"/.test(request), false, 'and no duration of our own in it');
+  assert.match(request, /configured duration: 1200 s/, 'what the timer is set to');
   assert.match(all, /hub answered/, 'and what came back');
 });
 
@@ -772,7 +818,6 @@ test('the watering command goes out with triggerSrc in its header', async () => 
 
   await hub.onSetValue(client, {
     gladys: createFakeGladys(),
-    config: { watering_duration: 15 },
     device,
     subDeviceId: '1B0091AFC74E',
     kind: 'watering',

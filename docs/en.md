@@ -46,9 +46,13 @@ Turn **Watering** on and the timer waters for the duration you set, then stops b
 exactly like the "water now" button in the Meross app. Turn it off to stop early. The switch
 clears itself when the watering ends.
 
-The duration is per timer: set it on the device, or set a default for all of them in the
-integration configuration. Gladys reads back the duration the timer itself remembers, so it
-survives a restart.
+The duration shown is **the one configured on the timer itself** — the same one the Meross
+app shows. Changing it from Gladys writes it to the device, so the app sees the change, and
+the other way round. There is a single value and it belongs to the hardware: Gladys never
+starts a watering with a duration of its own.
+
+Until the timer has reported one, the duration stays empty rather than showing an invented
+number.
 
 Gladys talks to your hub directly on your local network when it can reach it, and through
 the Meross servers otherwise. If a watering fails, the error names both channels and the

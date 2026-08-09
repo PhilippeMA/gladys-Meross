@@ -649,10 +649,12 @@ export class MerossClient {
       NAMESPACE.HUB_BATTERY,
       NAMESPACE.HUB_TOGGLEX,
       NAMESPACE.HUB_ONLINE,
-      // Not an `Appliance.Hub.*` namespace, but read on the same pass: this is
-      // where a watering timer keeps whether it is watering and for how long.
-      // It targets sub-devices by `subId`, so it merges differently.
+      // Not `Appliance.Hub.*` namespaces, but read on the same pass. Both
+      // target sub-devices by `subId`, so they merge differently.
+      //   - CONTROL_WATER      whether a cycle is running, and its length
+      //   - CONFIG_DEVICECFG   the CONFIGURED duration, the one the app edits
       NAMESPACE.CONTROL_WATER,
+      NAMESPACE.CONFIG_DEVICECFG,
     ]) {
       if (!(namespace in device.ability)) {
         continue;
