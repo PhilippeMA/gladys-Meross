@@ -168,7 +168,9 @@ gladys.onAction('diagnose', async () => {
           continue;
         }
         if (probe.silent) {
-          parts.push(`\n  ? ${probe.namespace}: no answer at all (this namespace is a dead end)`);
+          parts.push(
+            `\n  ? ${probe.namespace}: ${probe.attempts.length} shape(s) tried, none answered`,
+          );
           continue;
         }
         // Nothing worked: list what was tried, so the next attempt can differ.

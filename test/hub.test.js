@@ -225,15 +225,19 @@ test('a namespace that refuses every shape reports what was tried', async () => 
   assert.deepEqual(
     result.attempts.map((a) => a.request),
     [
-      {},
       { control: [] },
       { control: [{ subId: '0000A1B2' }] },
       { control: [{ subId: '0000C3D4' }] },
       { control: [{ subId: '0000E5F6' }] },
       { control: {} },
+      // The bare read goes LAST: it is the least informative shape and the one
+      // most likely to hang.
+      {},
     ],
   );
   assert.match(result.attempts[0].error, /error 5000/);
+  // Refusals are not silence: the device spoke, whatever it said.
+  assert.equal(result.silent, false);
 });
 
 test('probing keeps going past an accepted but empty read', async () => {
@@ -827,4 +831,46 @@ test('the watering command goes out with triggerSrc in its header', async () => 
   assert.equal(sent.length, 1);
   assert.equal(sent[0].header.triggerSrc, 'MerossClient');
   assert.equal(sent[0].header.namespace, 'Appliance.Control.Water');
+});
+
+test('one unanswered shape does not condemn a namespace that answers another', async () => {
+  // The bug this replaces: the probe stopped at the first timeout and reported
+  // a dead end. `Appliance.Config.DeviceCfg` ignores `{}` and answers
+  // `{"config":[]}` — so a diagnostic said "no answer at all" for a namespace
+  // the poll was reading happily, in the same report.
+  const client = createCountingClient();
+  const device = smartHub({ subDevices: new Map([['1B0091AFC74E', wateringTimer()]]) });
+  device.ability['Appliance.Config.DeviceCfg'] = {};
+
+  client.request = async (uuid, namespace, method, payload) => {
+    if (Object.keys(payload).length === 0) {
+      throw Object.assign(new Error('did not answer in time'), { code: TIMEOUT_ERROR_CODE });
+    }
+    return { config: [{ subId: '1B0091AFC74E', channel: 0, mstCfg: { dura: 900 } }] };
+  };
+
+  const [result] = await client.probeNamespaces(device, ['Appliance.Config.DeviceCfg']);
+
+  assert.ok(result.successes.length > 0, 'the shape that works is found');
+  assert.equal(result.silent, false, 'and the namespace is not called silent');
+  assert.equal(result.successes[0].payload.config[0].mstCfg.dura, 900);
+});
+
+test('a namespace that answers nothing at all is still reported as silent', async () => {
+  // The other half: real silence must stay recognisable, and must not cost the
+  // whole action's budget in timeouts.
+  const client = createCountingClient();
+  const device = smartHub({ subDevices: new Map([['1B0091AFC74E', wateringTimer()]]) });
+  device.ability['Appliance.Control.WaterEvent'] = {};
+
+  let calls = 0;
+  client.request = async () => {
+    calls += 1;
+    throw Object.assign(new Error('did not answer in time'), { code: TIMEOUT_ERROR_CODE });
+  };
+
+  const [result] = await client.probeNamespaces(device, ['Appliance.Control.WaterEvent']);
+
+  assert.equal(result.silent, true);
+  assert.equal(calls, 3, 'a few timeouts end it, not one and not all of them');
 });

@@ -71,7 +71,14 @@ export const PROBE_NAMESPACES = [
  * Probes must not stall the diagnostic: a namespace that ignores us costs one
  * timeout per shape tried, and there are several shapes.
  */
-const PROBE_TIMEOUT_MS = 6000;
+const PROBE_TIMEOUT_MS = 4000;
+
+/**
+ * How many unanswered shapes end a namespace. Every timeout costs the full
+ * budget, and the action has to finish inside its own; this bounds the worst
+ * case without giving up on the first silence.
+ */
+const MAX_PROBE_TIMEOUTS = 3;
 
 /**
  * Ports worth trying for the local endpoint. 80 is the documented one; 5010 is
@@ -97,11 +104,16 @@ export const LOCAL_PROBES = [
 
 /**
  * Request shapes to try when reading an undocumented namespace, most likely
- * first: a bare read, then the namespace's own key as an object, then as an
- * array (hub-style namespaces answer lists).
+ * first: the namespace's own key as an empty list, then targeting a
+ * sub-device, then as an object.
+ *
+ * The bare `{}` goes LAST. It is the least informative shape and the one most
+ * likely to hang — `Appliance.Config.DeviceCfg` ignores it outright while
+ * answering `{"config":[]}` perfectly — so trying it first spends a timeout
+ * before the shapes that work.
  */
 export function probePayloads(namespace, subDeviceIds = []) {
-  const payloads = [{}];
+  const payloads = [];
   // Watering namespaces name the sub-device `subId`; hub namespaces use `id`.
   // Getting this wrong is worth an `error 5000` and no data.
   const idKey = isSubIdNamespace(namespace) ? SUB_DEVICE_ID_KEY : 'id';
@@ -114,6 +126,7 @@ export function probePayloads(namespace, subDeviceIds = []) {
     payloads.push({ [key]: {} });
   }
 
+  payloads.push({});
   return payloads;
 }
 
@@ -712,6 +725,8 @@ export class MerossClient {
     // empty list is accepted and comes back empty, which tells us the key is
     // right but nothing about the data. The shape targeting the sub-device by
     // id is the interesting one, and it comes later.
+    let timeouts = 0;
+
     for (const payload of probePayloads(namespace, subDeviceIds)) {
       try {
         const reply = await this.request(device.uuid, namespace, METHOD.GET, payload, {
@@ -721,16 +736,30 @@ export class MerossClient {
       } catch (err) {
         attempts.push({ request: payload, error: err.message });
 
-        // Silence is different from a refusal: a namespace that does not answer
-        // at all will not answer a different payload either, so stop rather than
-        // burn one timeout per remaining shape.
         if (err.code === TIMEOUT_ERROR_CODE) {
-          return { namespace, attempts, silent: true };
+          timeouts += 1;
+          // Stopping at the FIRST timeout was wrong, and it lied: a device that
+          // ignores one shape can answer another. `Appliance.Config.DeviceCfg`
+          // ignores `{}` and answers `{"config":[]}`, so the report called it a
+          // dead end while the poll was reading it happily.
+          //
+          // A few timeouts still end the namespace, because each one costs the
+          // whole probe budget — but "a few", not one, and only silence counts.
+          if (timeouts >= MAX_PROBE_TIMEOUTS) {
+            break;
+          }
         }
       }
     }
 
-    return { namespace, successes, attempts };
+    return {
+      namespace,
+      successes,
+      attempts,
+      // Silent means EVERY attempt went unanswered. A namespace that refused a
+      // shape has spoken, whatever it said.
+      silent: successes.length === 0 && attempts.length > 0 && timeouts === attempts.length,
+    };
   }
 
   /**
