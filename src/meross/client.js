@@ -31,7 +31,6 @@ import {
   namespacePayloadKeys,
   SUB_DEVICE_ID_KEY,
   WATER_ONOFF,
-  buildMultiplePayload,
   TRIGGER_SRC,
 } from './protocol.js';
 
@@ -77,6 +76,15 @@ export const PROBE_NAMESPACES = [
 const PROBE_TIMEOUT_MS = 6000;
 
 /**
+ * How long to leave a hub alone after a watering SET it did not survive.
+ *
+ * An MSH400 answers a refused SET on this namespace by beeping, flashing its
+ * LED red and restarting. Firing the next probe immediately would measure the
+ * reboot rather than the message under test.
+ */
+const REBOOT_SETTLE_MS = 8000;
+
+/**
  * Ports worth trying for the local endpoint. 80 is the documented one; 5010 is
  * the second port an MSH400 was found listening on, and its purpose is unknown
  * — which is reason enough to ask it the same question.
@@ -118,39 +126,6 @@ export function probePayloads(namespace, subDeviceIds = []) {
   }
 
   return payloads;
-}
-
-/**
- * The SET shapes worth trying on `Appliance.Control.Water`, most likely first.
- *
- * EVERY shape is a stop (`onoff: 2`). That invariant is what makes it safe to
- * send them all blindly, and it is pinned by a test: a shape that could start a
- * watering has no place in a diagnostic.
- */
-export function wateringStopShapes(subId, durationSeconds = 900) {
-  const base = { subId, channel: 0, onoff: WATER_ONOFF.STOP };
-  return [
-    // What meross_lan sends, and the shape confirmed against hardware on the LAN.
-    { method: METHOD.SET, payload: { control: [base] } },
-    // Ours: same, plus the duration the Meross app includes.
-    { method: METHOD.SET, payload: { control: [{ ...base, dura: Math.round(durationSeconds) }] } },
-    // Echoing the exact shape the device reports its own state in.
-    { method: METHOD.SET, payload: { control: [{ ...base, lmTime: 0 }] } },
-    // A single object rather than a list, in case SET is indexed differently.
-    // This one is answered — with `error 5000` — which is how we know the hub
-    // does dispatch SET on this namespace over the cloud at all.
-    { method: METHOD.SET, payload: { control: base } },
-    // Without `channel`: the sub-device is already named by `subId`.
-    { method: METHOD.SET, payload: { control: [{ subId, onoff: WATER_ONOFF.STOP }] } },
-    // Keyed `id`, the way every `Appliance.Hub.*` namespace names a sub-device.
-    {
-      method: METHOD.SET,
-      payload: { control: [{ id: subId, channel: 0, onoff: WATER_ONOFF.STOP }] },
-    },
-    // As a PUSH: the namespace declares that method too, and a firmware that
-    // ignores a SET may still act on a PUSH.
-    { method: METHOD.PUSH, payload: { control: [base] } },
-  ];
 }
 
 export class MerossClient {
@@ -804,48 +779,49 @@ export class MerossClient {
   }
 
   /**
-   * Find out which SET shape — if any — a hub answers on
-   * `Appliance.Control.Water`.
+   * Ask the hub which HEADER it will accept on a watering SET.
    *
-   * This exists because the namespace answers a GET over the cloud and ignores
-   * a SET there, in silence rather than with `error 5000`. Silence means the
-   * message was dropped before it was ever dispatched, so the payload is not
-   * obviously the problem — but "not obviously" is not "certainly", and one
-   * round of trying settles it.
+   * The payload dimension is settled: seven shapes, every well-formed one
+   * swallowed and every malformed one refused with `error 5000`. What was never
+   * varied is the header — all seven carried an identical one, so they were a
+   * single experiment repeated.
    *
-   * This is the ONE diagnostic that writes, and it is bounded so that writing
-   * costs nothing: every shape is a STOP. Stopping is a no-op when nothing is
-   * running, so this can be run at any moment without watering anything. The
-   * GET-only probe above stays GET-only.
+   * The payload here is the canonical stop, so this cannot water anything. That
+   * matters more than usual: a watering SET this firmware refuses does not
+   * simply fail — the hub beeps, its LED goes red and back to green, and it
+   * stops answering. It restarts. Each attempt therefore costs the device a
+   * reboot, which is why the likeliest header goes first, why the run stops at
+   * the first answer, and why there is a pause between attempts.
    */
-  async probeWateringLocalHeaders(device, subDeviceId) {
+  async probeWateringLocalHeaders(device, subDeviceId, { settleMs = REBOOT_SETTLE_MS } = {}) {
     if (!device.ip) {
       return [];
     }
 
-    // One payload — the canonical stop, the shape confirmed against hardware —
-    // and the HEADER varied around it. The payload dimension is exhausted: six
-    // shapes, all either swallowed or refused. The header is the one part of
-    // the message that was never compared against the app's, and the signature
-    // covers only messageId, key and timestamp, so varying it stays valid.
     const payload = { control: [{ subId: subDeviceId, channel: 0, onoff: WATER_ONOFF.STOP }] };
 
     const variants = [
-      { label: 'as sent today', options: {} },
-      { label: 'no triggerSrc', options: { triggerSrc: null } },
-      { label: 'triggerSrc=Device', options: { triggerSrc: 'Device' } },
-      { label: 'triggerSrc=CloudControl', options: { triggerSrc: 'CloudControl' } },
       // The full meross_lan shape: `from` is a name, not a URL, and no uuid.
       {
         label: 'meross_lan header',
         options: { from: TRIGGER_SRC, includeUuid: false, triggerSrc: TRIGGER_SRC },
       },
+      { label: 'triggerSrc=Device', options: { triggerSrc: 'Device' } },
+      { label: 'triggerSrc=CloudControl', options: { triggerSrc: 'CloudControl' } },
       { label: 'no uuid', options: { includeUuid: false } },
+      { label: 'as sent today', options: {} },
+      { label: 'no triggerSrc', options: { triggerSrc: null } },
     ];
 
     const results = [];
 
     for (const { label, options } of variants) {
+      if (results.length > 0) {
+        // Give a hub that just restarted time to come back, or the next variant
+        // measures the reboot rather than the header it was meant to test.
+        await new Promise((resolve) => setTimeout(resolve, settleMs));
+      }
+
       try {
         const reply = await this.#oneLocalAtATime(device.uuid, () =>
           localRequest({
@@ -860,49 +836,10 @@ export class MerossClient {
           }),
         );
         results.push({ label, ok: true, payload: reply });
+        // Found one. Every further attempt would only cost another restart.
+        return results;
       } catch (err) {
         results.push({ label, ok: false, error: err.message });
-      }
-    }
-
-    return results;
-  }
-
-  async probeWateringSet(device, subDeviceId, { durationSeconds = 900 } = {}) {
-    const results = [];
-    const shapes = wateringStopShapes(subDeviceId, durationSeconds);
-
-    // The batching envelope, when the hub offers it. A batched message is
-    // unpacked and dispatched INTERNALLY, which is a different path from the
-    // one a top-level message takes — worth a try for a namespace the firmware
-    // accepts and then ignores.
-    if (NAMESPACE.CONTROL_MULTIPLE in (device.ability ?? {})) {
-      shapes.push({
-        namespace: NAMESPACE.CONTROL_MULTIPLE,
-        method: METHOD.SET,
-        payload: buildMultiplePayload(
-          [
-            {
-              namespace: NAMESPACE.CONTROL_WATER,
-              method: METHOD.SET,
-              payload: {
-                control: [{ subId: subDeviceId, channel: 0, onoff: WATER_ONOFF.STOP }],
-              },
-            },
-          ],
-          this.session?.key,
-        ),
-      });
-    }
-
-    for (const { namespace = NAMESPACE.CONTROL_WATER, method, payload } of shapes) {
-      try {
-        const reply = await this.request(device.uuid, namespace, method, payload, {
-          timeoutMs: PROBE_TIMEOUT_MS,
-        });
-        results.push({ namespace, method, request: payload, payload: reply });
-      } catch (err) {
-        results.push({ namespace, method, request: payload, error: err.message });
       }
     }
 

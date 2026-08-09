@@ -389,3 +389,86 @@ test('by default a local request carries triggerSrc and the uuid', async () => {
     server.close();
   }
 });
+
+test('the watering header probe can only ever stop, never start', async () => {
+  // This is the one diagnostic that writes, and what makes it acceptable is
+  // that a stop does nothing when nothing is running. It matters more here than
+  // usual: a watering SET this firmware refuses restarts the hub, so a shape
+  // able to open a valve would water someone's garden AND reboot their hub,
+  // unattended.
+  const { MerossClient } = await import('../src/meross/client.js');
+
+  const sent = [];
+  const { server, port } = await rawServer((requestBody) => {
+    sent.push(JSON.parse(requestBody));
+    // Refuse every one, so the sweep runs to the end and every variant is seen.
+    return `HTTP/1.1 470 \r\nContent-Length: 0\r\n\r\n`;
+  });
+
+  const client = new MerossClient();
+  client.session = { key: KEY };
+  const device = {
+    uuid: 'hub',
+    name: 'Smart Hub',
+    ip: '127.0.0.1',
+    localPort: port,
+    ability: {},
+  };
+
+  try {
+    const results = await client.probeWateringLocalHeaders(device, '1B0091AFC74E', {
+      settleMs: 0,
+    });
+
+    assert.ok(results.length > 1, 'every variant was tried');
+    assert.equal(sent.length, results.length);
+
+    for (const message of sent) {
+      assert.equal(message.header.namespace, 'Appliance.Control.Water');
+      for (const entry of message.payload.control) {
+        assert.equal(entry.onoff, 2, `${JSON.stringify(entry)} must be a stop`);
+        assert.equal('dura' in entry, false, 'and carry no duration');
+        assert.equal(entry.subId, '1B0091AFC74E');
+      }
+    }
+
+    // The variants really do differ, or the sweep measures nothing.
+    const headers = sent.map((m) =>
+      JSON.stringify([m.header.from, m.header.triggerSrc, m.header.uuid]),
+    );
+    assert.equal(new Set(headers).size, headers.length, 'each variant sends a different header');
+  } finally {
+    server.close();
+  }
+});
+
+test('the header sweep stops at the first header the hub accepts', async () => {
+  // Each refused attempt costs the hub a restart, so there is no reason to keep
+  // going once one is answered.
+  const { MerossClient } = await import('../src/meross/client.js');
+
+  let calls = 0;
+  const body = merossReply({ control: [] });
+  const { server, port } = await rawServer(() => {
+    calls += 1;
+    return `HTTP/1.1 200 OK\r\nContent-Length: ${Buffer.byteLength(body)}\r\n\r\n${body}`;
+  });
+
+  const client = new MerossClient();
+  client.session = { key: KEY };
+
+  try {
+    const results = await client.probeWateringLocalHeaders(
+      { uuid: 'hub', name: 'Smart Hub', ip: '127.0.0.1', localPort: port, ability: {} },
+      '1B0091AFC74E',
+      { settleMs: 0 },
+    );
+
+    assert.equal(calls, 1);
+    assert.equal(results.length, 1);
+    assert.equal(results[0].ok, true);
+    assert.equal(results[0].label, 'meross_lan header', 'the likeliest header goes first');
+  } finally {
+    server.close();
+  }
+});

@@ -5,14 +5,8 @@
 
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import {
-  isHub,
-  MerossClient,
-  mergeHubPayload,
-  mergeSubIdPayload,
-  wateringStopShapes,
-} from '../src/meross/client.js';
-import { HUB_PAYLOAD_KEYS, NAMESPACE, WATER_ONOFF } from '../src/meross/protocol.js';
+import { isHub, MerossClient, mergeHubPayload, mergeSubIdPayload } from '../src/meross/client.js';
+import { HUB_PAYLOAD_KEYS, NAMESPACE } from '../src/meross/protocol.js';
 import { TIMEOUT_ERROR_CODE } from '../src/meross/mqttClient.js';
 import { parseDeviceExternalId, subDevicePlatformId } from '../src/devices/featureIds.js';
 import * as hub from '../src/devices/hub.js';
@@ -212,88 +206,6 @@ test('probing never sends anything but a GET', async () => {
   await client.probeNamespaces(device);
   assert.ok(methods.length > 0);
   assert.deepEqual([...new Set(methods)], ['GET']);
-});
-
-test('the watering SET probe can only ever stop, never start', async () => {
-  // This is the one diagnostic that writes, and the whole reason it is
-  // acceptable is that a stop is a no-op when nothing is running. A shape that
-  // could open a valve would turn a diagnostic into a watering, on someone
-  // else's garden, with no one watching.
-  const client = createCountingClient();
-  const device = wateringHub();
-
-  const sent = [];
-  client.request = async (uuid, namespace, method, payload) => {
-    sent.push({ namespace, method, payload });
-    return {};
-  };
-
-  await client.probeWateringSet(device, '1B0091AFC74E', { durationSeconds: 900 });
-
-  assert.ok(sent.length > 0);
-  // A batched message hides its real commands one level down, so unwrap before
-  // checking: an invariant that only holds at the top level holds nowhere.
-  const commands = sent.flatMap(({ payload }) =>
-    Array.isArray(payload.multiple) ? payload.multiple.map((entry) => entry.payload) : [payload],
-  );
-
-  for (const payload of commands) {
-    const entries = Array.isArray(payload.control) ? payload.control : [payload.control];
-    for (const entry of entries) {
-      assert.equal(entry.onoff, WATER_ONOFF.STOP, `${JSON.stringify(entry)} must be a stop`);
-      // Whatever key names the sub-device, the probe must stay on the one it
-      // was pointed at rather than addressing the whole hub.
-      assert.equal(entry.subId ?? entry.id, '1B0091AFC74E');
-    }
-  }
-});
-
-test('the watering probe batches only when the hub offers batching', async () => {
-  const client = createCountingClient();
-  const device = wateringHub();
-  device.ability['Appliance.Control.Multiple'] = { maxCmdNum: 5 };
-
-  const namespaces = [];
-  client.request = async (uuid, namespace, method, payload) => {
-    namespaces.push({ namespace, payload });
-    return {};
-  };
-
-  await client.probeWateringSet(device, '1B0091AFC74E');
-  const batched = namespaces.find((n) => n.namespace === 'Appliance.Control.Multiple');
-  assert.ok(batched, 'the batching envelope is tried');
-  // Each entry must be a complete, independently signed message.
-  assert.equal(batched.payload.multiple.length, 1);
-  assert.equal(batched.payload.multiple[0].header.namespace, 'Appliance.Control.Water');
-  assert.match(batched.payload.multiple[0].header.sign, /^[0-9a-f]{32}$/);
-
-  // A hub without the ability is never sent one.
-  const plain = wateringHub();
-  namespaces.length = 0;
-  await client.probeWateringSet(plain, '1B0091AFC74E');
-  assert.equal(namespaces.filter((n) => n.namespace === 'Appliance.Control.Multiple').length, 0);
-});
-
-test('the watering SET probe reports each shape, answered or not', async () => {
-  const client = createCountingClient();
-  const device = wateringHub();
-
-  // Only the shape without a duration is answered.
-  client.request = async (uuid, namespace, method, payload) => {
-    if ('dura' in (payload.control?.[0] ?? {})) {
-      throw new Error('did not answer in time');
-    }
-    return { control: [{ subId: '1B0091AFC74E', onoff: 2 }] };
-  };
-
-  const results = await client.probeWateringSet(device, '1B0091AFC74E');
-
-  assert.equal(results.length, wateringStopShapes('1B0091AFC74E').length);
-  const answered = results.filter((result) => result.payload);
-  const failed = results.filter((result) => result.error);
-  assert.ok(answered.length > 0, 'the shapes that work are reported');
-  assert.ok(failed.length > 0, 'and so are the ones that do not');
-  assert.match(failed[0].error, /did not answer/);
 });
 
 test('a namespace that refuses every shape reports what was tried', async () => {
