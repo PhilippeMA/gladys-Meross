@@ -76,6 +76,9 @@ export const NAMESPACE = {
 
   // Watering timers (MST100 behind an MSH400/MSH450 sprinkler hub).
   CONTROL_WATER: 'Appliance.Control.Water',
+  // Where a sub-device keeps its CONFIGURED settings — for a watering timer,
+  // the default duration the Meross app sets.
+  CONFIG_DEVICECFG: 'Appliance.Config.DeviceCfg',
 };
 
 /**
@@ -91,7 +94,8 @@ export const NAMESPACE = {
  *   - the sub-device is addressed by `subId`, NOT by `id` like every hub
  *     namespace;
  *   - stopping uses onoff: 2, NOT 0. Sending 0 is not "stop".
- * `dura` is the watering duration in SECONDS, and is omitted when stopping.
+ *
+ * The app's `dura` is deliberately NOT reproduced — see buildWaterControlPayload.
  */
 export const WATER_ONOFF = {
   START: 1,
@@ -99,28 +103,59 @@ export const WATER_ONOFF = {
 };
 
 /**
+ * Read a watering timer's configured duration, in seconds.
+ *
+ * Two different `dura` fields exist and only one of them is the setting:
+ *   - `Appliance.Config.DeviceCfg` -> `mstCfg.dura` is CONFIGURED, and is what
+ *     the Meross app edits;
+ *   - `Appliance.Control.Water` -> `dura` is the duration of the LAST CYCLE.
+ * Reading the second as though it were the first makes Gladys report back
+ * whatever it last sent, which looks like a value out of nowhere.
+ */
+export function readConfiguredDuration(state = {}) {
+  const configured = Number(state.config?.mstCfg?.dura);
+  if (Number.isFinite(configured) && configured > 0) {
+    return configured;
+  }
+  const lastCycle = Number(state.control?.dura);
+  return Number.isFinite(lastCycle) && lastCycle > 0 ? lastCycle : null;
+}
+
+/**
  * Build the `Appliance.Control.Water` payload.
+ *
+ * No `dura`. The app's capture carries one, and sending it OVERRIDES the
+ * duration configured on the timer for that cycle — which is how this
+ * integration silently replaced a user's own setting with its own default.
+ * Left out, the timer waters for the duration it was configured with, and the
+ * Meross app and Gladys agree because there is only one value.
+ *
+ * `Appliance.Config.DeviceCfg` is where that configured value lives, and is
+ * what to write when the user really does want a different duration.
  *
  * @param {object} options
  * @param {string} options.subId sub-device id of the timer
  * @param {number} [options.channel]
- * @param {number} [options.durationSeconds] required to start, omitted to stop
  * @param {boolean} options.start
  */
-export function buildWaterControlPayload({ subId, channel = 0, durationSeconds, start }) {
-  const entry = {
-    channel,
-    onoff: start ? WATER_ONOFF.START : WATER_ONOFF.STOP,
-    subId,
+export function buildWaterControlPayload({ subId, channel = 0, start }) {
+  return {
+    control: [{ channel, onoff: start ? WATER_ONOFF.START : WATER_ONOFF.STOP, subId }],
   };
+}
 
-  if (start) {
-    entry.dura = Math.round(durationSeconds);
-  }
-
-  // Field order mirrors the app's own request; harmless, but it keeps a capture
-  // diff readable when comparing against a future firmware.
-  return { control: [start ? { channel, dura: entry.dura, onoff: entry.onoff, subId } : entry] };
+/**
+ * Build the `Appliance.Config.DeviceCfg` payload that sets a watering timer's
+ * configured duration — the same value the Meross app edits.
+ *
+ * `dura` is in SECONDS here, as it is everywhere in the watering family, and it
+ * lives under an `mstCfg` group named after the model.
+ * (Shape from `krahabb/meross_lan`.)
+ */
+export function buildWateringDurationPayload({ subId, channel = 0, durationSeconds }) {
+  return {
+    config: [{ channel, subId, mstCfg: { dura: Math.round(durationSeconds) } }],
+  };
 }
 
 /** Prefix shared by every hub namespace. */

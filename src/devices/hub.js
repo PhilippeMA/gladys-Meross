@@ -27,10 +27,12 @@ import {
 } from '@gladysassistant/integration-sdk';
 import {
   buildWaterControlPayload,
+  buildWateringDurationPayload,
   fromDeciUnit,
   isHubNamespace,
   METHOD,
   NAMESPACE,
+  readConfiguredDuration,
   toDeciUnit,
   WATER_ONOFF,
 } from '../meross/protocol.js';
@@ -375,10 +377,15 @@ export function buildSubDeviceStates(sub) {
   }
 
   if (isWateringTimer(sub)) {
-    states.push({
-      featureKey: buildFeatureKey(FEATURE_KIND.WATERING_DURATION, 0),
-      state: wateringDuration(sub),
-    });
+    // Only when the device has actually told us. Publishing a made-up default
+    // here is what let Gladys present its own number as the timer's.
+    const minutes = wateringDuration(sub);
+    if (minutes !== null) {
+      states.push({
+        featureKey: buildFeatureKey(FEATURE_KIND.WATERING_DURATION, 0),
+        state: minutes,
+      });
+    }
 
     // `Appliance.Control.Water` carries the real cycle state, both on poll and
     // on push: `onoff` is 1 while watering and 2 once stopped. Publishing that
@@ -406,7 +413,7 @@ export function buildSubDeviceStates(sub) {
 
 // --- Commands ----------------------------------------------------------------
 
-export async function onSetValue(client, { gladys, device, subDeviceId, kind, value, config }) {
+export async function onSetValue(client, { gladys, device, subDeviceId, kind, value }) {
   if (!subDeviceId) {
     throw new Error(`A hub feature must address a sub-device (${device.name})`);
   }
@@ -415,36 +422,50 @@ export async function onSetValue(client, { gladys, device, subDeviceId, kind, va
     case FEATURE_KIND.WATERING: {
       const sub = device.subDevices?.get(subDeviceId);
       const start = Number(value) === 1;
-      const minutes = wateringDuration(sub, config);
 
       requireAbility(device, NAMESPACE.CONTROL_WATER, subDeviceId);
       await sendWateringCommand(
         client,
         device,
-        buildWaterControlPayload({
-          subId: subDeviceId,
-          durationSeconds: minutes * 60,
-          start,
-        }),
-        // What the timer holds when the command goes out. A watering that is
-        // acknowledged and does nothing needs this context to be explainable
-        // at all: `togglex` is the timer's own enable, and a device that is
-        // disabled may well accept a command it will not carry out.
-        `timer enabled: ${sub?.state?.togglex?.onoff ?? 'unknown'}, ` +
+        // Deliberately no duration: the timer runs for the length it is
+        // configured with, which is the one the Meross app shows.
+        buildWaterControlPayload({ subId: subDeviceId, start }),
+        `configured duration: ${readConfiguredDuration(sub?.state) ?? 'unknown'} s, ` +
           `last cycle: ${JSON.stringify(sub?.state?.control ?? {})}`,
       );
 
-      scheduleWateringStop(gladys, device, subDeviceId, start ? minutes * 60 : 0);
+      const seconds = readConfiguredDuration(sub?.state);
+      scheduleWateringStop(gladys, device, subDeviceId, start ? seconds : 0);
       return start ? 1 : 0;
     }
 
     case FEATURE_KIND.WATERING_DURATION: {
       const minutes = normalizeWateringDuration(value);
+      if (minutes === null) {
+        throw new Error(`Invalid watering duration for ${subDeviceId}: ${value}`);
+      }
+
+      // Write it to the TIMER, not to a variable of our own. That is the whole
+      // point: the duration lives in one place, the device, and the Meross app
+      // edits the same field. Keeping a private copy here is what made Gladys
+      // and the app disagree.
+      requireAbility(device, NAMESPACE.CONFIG_DEVICECFG, subDeviceId);
+      await client.request(
+        device.uuid,
+        NAMESPACE.CONFIG_DEVICECFG,
+        METHOD.SET,
+        buildWateringDurationPayload({ subId: subDeviceId, durationSeconds: minutes * 60 }),
+      );
+
+      // Reflect it locally so the feature does not snap back before the next
+      // poll confirms it from the device.
       const sub = device.subDevices?.get(subDeviceId);
       if (sub) {
-        // Held per timer, so several timers can water for different lengths.
-        sub.wateringDurationMinutes = minutes;
+        sub.state = sub.state ?? {};
+        sub.state.config = { ...(sub.state.config ?? {}), mstCfg: { dura: minutes * 60 } };
       }
+
+      logger.info(`Watering duration of ${subDeviceId} set to ${minutes} min on the device`);
       return minutes;
     }
 
@@ -537,24 +558,17 @@ async function sendWateringCommand(client, device, payload, context = '') {
 const SETTLE_DELAY_MS = 600;
 
 /**
- * Watering duration for one timer, in minutes.
+ * The timer's configured watering duration, in minutes, or null if unknown.
  *
- * Three sources, most specific first: what the user set in Gladys for THIS
- * timer, then what the timer itself holds (`dura`, in seconds — it remembers
- * the last duration it was given, so this survives a restart of the
- * integration), then the integration-wide default.
+ * Read from the device — never invented. An integration-wide default used to
+ * fill this in, and because starting a watering also SENT that default, the
+ * device ended up reporting back the very number Gladys had put there. It
+ * looked like a value from nowhere, and it had quietly replaced the one set in
+ * the Meross app.
  */
-export function wateringDuration(sub, config) {
-  if (sub?.wateringDurationMinutes !== undefined) {
-    return normalizeWateringDuration(sub.wateringDurationMinutes);
-  }
-
-  const seconds = Number(sub?.state?.control?.dura);
-  if (Number.isFinite(seconds) && seconds > 0) {
-    return normalizeWateringDuration(Math.round(seconds / 60));
-  }
-
-  return normalizeWateringDuration(config?.watering_duration);
+export function wateringDuration(sub) {
+  const seconds = readConfiguredDuration(sub?.state);
+  return seconds === null ? null : normalizeWateringDuration(seconds / 60);
 }
 
 /**
@@ -575,7 +589,9 @@ function scheduleWateringStop(gladys, device, subDeviceId, durationSeconds) {
   clearTimeout(sub.wateringTimer);
   sub.wateringTimer = undefined;
 
-  if (durationSeconds <= 0) {
+  // No duration known means no local timer — the poll and the device's own push
+  // remain the authority either way, so guessing one buys nothing.
+  if (!durationSeconds || durationSeconds <= 0) {
     return;
   }
 

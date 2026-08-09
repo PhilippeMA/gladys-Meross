@@ -551,7 +551,9 @@ test('a watering timer exposes no on/off switch at all', () => {
   assert.equal(duration.unit, 'minutes');
   assert.equal(duration.read_only, false);
   assert.equal(duration.min, 1);
-  assert.equal(duration.max, 120);
+  // A day, matching what meross_lan allows. Clamping tighter would misreport a
+  // duration the device really holds — and this value is read from the device.
+  assert.equal(duration.max, 1440);
 });
 
 test('a thermostatic valve keeps its On/Off switch', () => {

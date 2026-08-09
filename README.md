@@ -61,7 +61,8 @@ rather than from probing:
 - the payload key is **`control`**, not `water` after the namespace;
 - the sub-device is addressed by **`subId`**, not by `id` like every hub namespace;
 - **stopping uses `onoff: 2`**, not `0`. Sending `0` is not "stop";
-- `dura` is the duration in **seconds**, and is omitted when stopping.
+- `dura` is the duration in **seconds** — the app sends it, and this integration deliberately
+  does not. See below.
 
 The same shape reads back, so the namespace is polled as well as pushed:
 
@@ -71,9 +72,26 @@ The same shape reads back, so the namespace is polled as well as pushed:
 
 A timer therefore exposes a **Watering** switch that reflects what the hardware is really
 doing — a cycle started from the Meross app or by the timer's own schedule shows up in
-Gladys too — and a **Watering duration** in minutes. The duration is read from the timer's
-own `dura`, which it remembers between cycles; setting it in Gladys overrides that for the
-next watering, and the device then keeps it.
+Gladys too — and a **Watering duration** in minutes.
+
+##### Two fields called `dura`, and only one is the setting
+
+| Field                                        | What it is                                          |
+| -------------------------------------------- | --------------------------------------------------- |
+| `Appliance.Config.DeviceCfg` → `mstCfg.dura` | the CONFIGURED duration — what the Meross app edits |
+| `Appliance.Control.Water` → `dura`           | the duration of the LAST CYCLE                      |
+
+Reading the second as though it were the first is a trap worth naming, because the mistake
+hides itself. This integration used to do three things at once: default the duration to an
+integration-wide setting, SEND that default with every start, and then read the value back
+from `Control.Water`. The device dutifully reported the number Gladys had just written, so
+the reading looked like confirmation — while the duration its owner had set in the Meross app
+had been overwritten. A user asked where the 900 came from, and the answer was: from us.
+
+So the duration is read from `Config.DeviceCfg` and **written there** when the user changes
+it — the same field the app edits, one value, no copy of our own. A start carries no `dura`
+at all, which is also what `meross_lan` does. When the device has reported nothing, the
+feature stays unpublished rather than showing an invented number.
 
 The switch is also cleared by a local timer when the duration elapses. That is not the
 authority — the next poll is — it just spares the user a switch left visibly on for up to a
