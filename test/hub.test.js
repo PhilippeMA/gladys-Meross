@@ -803,3 +803,41 @@ test('a plain device external_id resolves with no sub-device', () => {
     subDeviceId: null,
   });
 });
+
+test('the watering command logs the exact message and the exact answer', async () => {
+  // A command that is accepted and does nothing can only be argued about
+  // against the bytes that went out and the answer that came back. Summarising
+  // either one is how "it does not work" stays unfalsifiable.
+  const device = wateringHub();
+  device.localOk = true;
+  device.ip = '192.168.50.24';
+  const client = createCountingClient();
+  client.request = async () => ({ control: [{ subId: '1B0091AFC74E', onoff: 1, dura: 900 }] });
+
+  const lines = [];
+  const originalInfo = console.info;
+  const originalLog = console.log;
+  const capture = (...args) => lines.push(args.join(' '));
+  console.info = capture;
+  console.log = capture;
+
+  try {
+    await hub.onSetValue(client, {
+      gladys: createFakeGladys(),
+      config: { watering_duration: 15 },
+      device,
+      subDeviceId: '1B0091AFC74E',
+      kind: 'watering',
+      value: 1,
+    });
+  } finally {
+    console.info = originalInfo;
+    console.log = originalLog;
+  }
+
+  const all = lines.join('\n');
+  assert.match(all, /LAN 192\.168\.50\.24/, 'the channel actually used');
+  assert.match(all, /"dura":900/, 'the payload verbatim');
+  assert.match(all, /timer enabled: 0/, 'the state the timer was in');
+  assert.match(all, /hub answered/, 'and what came back');
+});

@@ -420,12 +420,12 @@ export async function onSetValue(client, { gladys, device, subDeviceId, kind, va
           durationSeconds: minutes * 60,
           start,
         }),
-      );
-
-      logger.info(
-        start
-          ? `Watering started on ${subDeviceId} for ${minutes} min`
-          : `Watering stopped on ${subDeviceId}`,
+        // What the timer holds when the command goes out. A watering that is
+        // acknowledged and does nothing needs this context to be explainable
+        // at all: `togglex` is the timer's own enable, and a device that is
+        // disabled may well accept a command it will not carry out.
+        `timer enabled: ${sub?.state?.togglex?.onoff ?? 'unknown'}, ` +
+          `last cycle: ${JSON.stringify(sub?.state?.control ?? {})}`,
       );
 
       scheduleWateringStop(gladys, device, subDeviceId, start ? minutes * 60 : 0);
@@ -487,9 +487,18 @@ export async function onSetValue(client, { gladys, device, subDeviceId, kind, va
  * If both refuse, the error names both failures. A user cannot act on
  * "watering does not work"; they can act on "no route to 192.168.50.24".
  */
-async function sendWateringCommand(client, device, payload) {
+async function sendWateringCommand(client, device, payload, context = '') {
+  // Log the message ITSELF, not a summary of it. A command that is accepted and
+  // does nothing can only be argued about against the exact bytes that went out
+  // and the exact answer that came back — and until the LAN worked, that answer
+  // had never once been seen.
+  const channel = device.localOk ? `LAN ${device.ip}` : 'cloud';
+  logger.info(`Watering command over ${channel}: ${JSON.stringify(payload)} — ${context}`);
+
   try {
-    return await client.request(device.uuid, NAMESPACE.CONTROL_WATER, METHOD.SET, payload);
+    const reply = await client.request(device.uuid, NAMESPACE.CONTROL_WATER, METHOD.SET, payload);
+    logger.info(`Watering command accepted, hub answered: ${JSON.stringify(reply)}`);
+    return reply;
   } catch (cloudError) {
     if (cloudError.code !== TIMEOUT_ERROR_CODE) {
       throw cloudError;
@@ -501,7 +510,14 @@ async function sendWateringCommand(client, device, payload) {
     );
 
     try {
-      return await client.requestLocal(device.uuid, NAMESPACE.CONTROL_WATER, METHOD.SET, payload);
+      const reply = await client.requestLocal(
+        device.uuid,
+        NAMESPACE.CONTROL_WATER,
+        METHOD.SET,
+        payload,
+      );
+      logger.info(`Watering command accepted on the LAN, hub answered: ${JSON.stringify(reply)}`);
+      return reply;
     } catch (localError) {
       throw new Error(
         `Hub "${device.name}" accepted the watering command on neither channel. Over the ` +
