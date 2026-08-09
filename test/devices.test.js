@@ -530,9 +530,11 @@ test('a valve exposes a target temperature bounded by the range it reports', () 
   assert.equal(target.read_only, false);
 });
 
-test('a watering timer names its switch for what it actually does', () => {
-  // The device accepts and adopts this switch but waters nothing: calling it
-  // "On/Off" invites the user to expect a watering it cannot trigger.
+test('a watering timer exposes no on/off switch at all', () => {
+  // It reports `togglex`, so the generic rule would give it a switch. Confirmed
+  // against an MSH400: the hub accepts `Appliance.Hub.ToggleX` for an MST100,
+  // the timer clicks audibly, and reads back unchanged. A switch that makes a
+  // noise, waters nothing and always fails is worse than no switch.
   const gladys = createFakeGladys();
   const device = smartHub({ subDevices: new Map([['1B0091AFC74E', wateringTimer()]]) });
 
@@ -540,10 +542,8 @@ test('a watering timer names its switch for what it actually does', () => {
 
   assert.deepEqual(
     timer.features.map((f) => f.name),
-    ['Watering', 'Watering duration', 'Timer enabled', 'Battery'],
+    ['Watering', 'Watering duration', 'Battery'],
   );
-  // Still controllable: it is a real state the device honours.
-  assert.equal(feature(timer, 'on-off-0').read_only, false);
   assert.equal(feature(timer, 'battery-0').read_only, true);
 
   // The watering duration is settable, in minutes.
@@ -554,12 +554,12 @@ test('a watering timer names its switch for what it actually does', () => {
   assert.equal(duration.max, 120);
 });
 
-test('a thermostatic valve keeps its plain On/Off name', () => {
+test('a thermostatic valve keeps its On/Off switch', () => {
   const gladys = createFakeGladys();
   const [, valve] = buildDiscoveredDevices(gladys, [smartHub()], config);
 
+  // A valve reports togglex too, and there the switch is real.
   assert.ok(valve.features.some((f) => f.name === 'On/Off'));
-  assert.ok(!valve.features.some((f) => f.name === 'Timer enabled'));
 });
 
 test('a leak sensor exposes its leak state and battery', () => {

@@ -74,7 +74,7 @@ export async function localRequest({
     throw new Error('No LAN address known for this device');
   }
 
-  const address = port === DEFAULT_PORT ? ip : `${ip}:${port}`;
+  const address = !port || port === DEFAULT_PORT ? ip : `${ip}:${port}`;
   const url = `http://${address}${path}`;
 
   // The Meross app sends `from` and `uuid` on local requests; mirroring it
@@ -163,7 +163,13 @@ function postJson({ ip, port, path, body, timeoutMs }) {
         headers: {
           'Content-Type': 'application/json',
           'Content-Length': Buffer.byteLength(body),
+          // One request, one socket, closed straight after. The firmware's HTTP
+          // server has room for very few connections, and a pooled socket it has
+          // silently forgotten comes back as ECONNRESET on the NEXT command.
+          Connection: 'close',
         },
+        // No agent, so nothing is pooled or reused for the same reason.
+        agent: false,
         timeout: timeoutMs,
         insecureHTTPParser: true,
       },

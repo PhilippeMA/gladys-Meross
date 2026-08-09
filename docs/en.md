@@ -40,7 +40,7 @@ temperature, which is what automations need most.
 #### Watering timers
 
 An MST100 watering timer on an MSH400 hub gives you a **Watering** switch, a **Watering
-duration** in minutes, its **Timer enabled** state and its **battery level**.
+duration** in minutes and its **battery level**.
 
 Turn **Watering** on and the timer waters for the duration you set, then stops by itself —
 exactly like the "water now" button in the Meross app. Turn it off to stop early. The switch

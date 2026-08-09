@@ -30,13 +30,13 @@ A hub owns nothing the user can act on — it is a gateway. So the hub itself is
 published: each sub-device paired to it becomes its own Gladys device, with the name chosen
 in the Meross app.
 
-| Sub-device         | Typical models | Features in Gladys                                       |
-| ------------------ | -------------- | -------------------------------------------------------- |
-| Thermometer        | MS100          | Temperature, humidity, battery                           |
-| Thermostatic valve | MTS100, MTS150 | Target temperature, room temperature, on/off, battery    |
-| Water leak sensor  | MS400, MS405   | Leak detected, battery                                   |
-| Door/window sensor | MS200          | Opening, battery                                         |
-| Watering timer     | MST100         | Watering (start/stop + duration), timer enabled, battery |
+| Sub-device         | Typical models | Features in Gladys                                    |
+| ------------------ | -------------- | ----------------------------------------------------- |
+| Thermometer        | MS100          | Temperature, humidity, battery                        |
+| Thermostatic valve | MTS100, MTS150 | Target temperature, room temperature, on/off, battery |
+| Water leak sensor  | MS400, MS405   | Leak detected, battery                                |
+| Door/window sensor | MS200          | Opening, battery                                      |
+| Watering timer     | MST100         | Watering (start/stop + duration), battery             |
 
 Sub-device features are derived from the **data a sub-device actually reports**, with its
 type only as a fallback hint: hub generations name their types inconsistently, but they all
@@ -142,6 +142,19 @@ command that worked. Here a reply is whatever carries the `messageId` we sent an
 namespace or an error namespace — `krahabb/meross_lan` matches the same way. A PUSH that
 resolves a command then continues through the push path as well, because it is genuinely both
 an answer and a state announcement.
+
+**A watering timer gets no on/off switch**, even though it reports `togglex` and the generic
+rule would give it one. The hub accepts `Appliance.Hub.ToggleX` for an MST100, the timer
+clicks audibly, and reads back unchanged — acknowledged and refused. A switch that makes a
+noise, waters nothing and always fails is worse than no switch. `meross_lan` suppresses it
+too.
+
+**Local requests to one device are serialised.** The firmware serves a single HTTP request at
+a time, and a command, its read-back and a poll all fire at once: overlapping them earns
+`ECONNRESET` and `ETIMEDOUT`, which read as an unreachable device and demote the transport to
+the cloud for what is only a queueing problem. Sockets are not pooled either (`Connection:
+close`, no agent), since a socket the device has silently forgotten comes back as a reset on
+the NEXT command. The chain is per device, so two plugs still talk in parallel.
 
 `Appliance.Control.WaterEvent` really is unreadable — it is push-only by design, and every
 GET goes unanswered. Schedules are readable through `Appliance.Digest.WaterPlan` (keyed

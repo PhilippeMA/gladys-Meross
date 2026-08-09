@@ -212,3 +212,121 @@ test('a closed port is named as such, not as a generic failure', async () => {
     /nothing is listening/,
   );
 });
+
+// --- One request at a time ---------------------------------------------------
+
+test('LAN requests to one device never overlap', async () => {
+  // Meross firmware serves a single local request at a time. A command, its
+  // read-back and a poll all fire at once, and overlapping them earns
+  // ECONNRESET and ETIMEDOUT — which read as an unreachable device and demote
+  // the transport to the cloud, for what was only ever a queueing problem.
+  const { MerossClient } = await import('../src/meross/client.js');
+
+  let inFlight = 0;
+  let peak = 0;
+  const server = net.createServer((socket) => {
+    inFlight += 1;
+    peak = Math.max(peak, inFlight);
+    socket.on('data', () => {
+      setTimeout(() => {
+        const body = merossReply({ all: {} });
+        socket.end(`HTTP/1.1 200 OK\r\nContent-Length: ${Buffer.byteLength(body)}\r\n\r\n${body}`);
+        inFlight -= 1;
+      }, 25);
+    });
+    socket.on('error', () => {});
+  });
+  await new Promise((resolve) => server.listen(0, '127.0.0.1', resolve));
+
+  const client = new MerossClient();
+  client.session = { key: KEY };
+  client.preferLocal = true;
+  client.devices.set('hub', {
+    uuid: 'hub',
+    name: 'Smart Hub',
+    ip: '127.0.0.1',
+    localPort: server.address().port,
+    localOk: true,
+    ability: {},
+  });
+
+  try {
+    await Promise.all(
+      Array.from({ length: 6 }, () => client.request('hub', 'Appliance.System.All', 'GET')),
+    );
+    assert.equal(peak, 1, 'no two LAN calls to the same device were open together');
+  } finally {
+    server.close();
+  }
+});
+
+test('one device queueing does not hold up another', async () => {
+  // The chain is per device: a slow hub must not stall a plug on the same LAN.
+  const { MerossClient } = await import('../src/meross/client.js');
+
+  const body = merossReply({ all: {} });
+  const { server, port } = await rawServer(
+    () => `HTTP/1.1 200 OK\r\nContent-Length: ${Buffer.byteLength(body)}\r\n\r\n${body}`,
+  );
+
+  const client = new MerossClient();
+  client.session = { key: KEY };
+  client.preferLocal = true;
+  for (const uuid of ['hub', 'plug']) {
+    client.devices.set(uuid, {
+      uuid,
+      name: uuid,
+      ip: '127.0.0.1',
+      localPort: port,
+      localOk: true,
+      ability: {},
+    });
+  }
+
+  try {
+    await Promise.all([
+      client.request('hub', 'Appliance.System.All', 'GET'),
+      client.request('plug', 'Appliance.System.All', 'GET'),
+    ]);
+    assert.equal(client.localChains.size, 2, 'each device has its own chain');
+  } finally {
+    server.close();
+  }
+});
+
+test('a failed LAN call does not wedge the queue behind it', async () => {
+  // The chain must advance on rejection too, or one bad command silences the
+  // device for good.
+  const { MerossClient } = await import('../src/meross/client.js');
+
+  let first = true;
+  const body = merossReply({ all: {} });
+  const { server, port } = await rawServer(() => {
+    if (first) {
+      first = false;
+      return 'not http at all';
+    }
+    return `HTTP/1.1 200 OK\r\nContent-Length: ${Buffer.byteLength(body)}\r\n\r\n${body}`;
+  });
+
+  const client = new MerossClient();
+  client.session = { key: KEY };
+  client.preferLocal = true;
+  const device = {
+    uuid: 'hub',
+    name: 'Smart Hub',
+    ip: '127.0.0.1',
+    localPort: port,
+    localOk: true,
+    ability: {},
+  };
+  client.devices.set('hub', device);
+
+  try {
+    await client.requestLocal('hub', 'Appliance.System.All', 'GET').catch(() => {});
+    const payload = await client.requestLocal('hub', 'Appliance.System.All', 'GET');
+    assert.deepEqual(payload, { all: {} });
+  } finally {
+    server.close();
+  }
+});

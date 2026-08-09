@@ -42,8 +42,7 @@ température de consigne, qui est l'essentiel pour les automatisations.
 #### Programmateurs d'arrosage
 
 Un programmateur MST100 sur un hub MSH400 vous donne un interrupteur **« Watering »**, une
-durée **« Watering duration »** en minutes, son état **« Timer enabled »** et son **niveau de
-batterie**.
+durée **« Watering duration »** en minutes et son **niveau de batterie**.
 
 Activez **Watering** et le programmateur arrose pendant la durée réglée, puis s'arrête tout
 seul — exactement comme le bouton « arroser maintenant » de l'application Meross. Désactivez-le

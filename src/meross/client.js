@@ -172,6 +172,8 @@ export class MerossClient {
     this.devices = new Map();
     /** uuid -> { transport, degraded?, message? } */
     this.transports = new Map();
+    /** uuid -> promise chain, so LAN requests to one device never overlap. */
+    this.localChains = new Map();
 
     this.baseUrl = cloudApi.REGION_ENDPOINTS.eu;
     this.preferLocal = true;
@@ -402,7 +404,11 @@ export class MerossClient {
     }
 
     if (device.ip) {
-      device.localOk = await isReachable({ ip: device.ip, key: this.session.key });
+      device.localOk = await isReachable({
+        ip: device.ip,
+        port: device.localPort,
+        key: this.session.key,
+      });
       if (device.localOk) {
         logger.info(`${device.name} is reachable on the LAN at ${device.ip}`);
         this.transports.set(device.uuid, { transport: DEVICE_TRANSPORTS.LOCAL });
@@ -489,15 +495,18 @@ export class MerossClient {
 
     if (this.preferLocal && device.localOk && device.ip) {
       try {
-        return await localRequest({
-          ip: device.ip,
-          key: this.session.key,
-          uuid: device.uuid,
-          namespace,
-          method,
-          payload,
-          timeoutMs,
-        });
+        return await this.#oneLocalAtATime(uuid, () =>
+          localRequest({
+            ip: device.ip,
+            port: device.localPort,
+            key: this.session.key,
+            uuid: device.uuid,
+            namespace,
+            method,
+            payload,
+            timeoutMs,
+          }),
+        );
       } catch (err) {
         logger.warn(`LAN call to ${device.name} failed, falling back to the cloud`, err);
         device.localOk = false;
@@ -534,18 +543,47 @@ export class MerossClient {
     }
 
     try {
-      return await localRequest({
-        ip: device.ip,
-        key: this.session.key,
-        uuid: device.uuid,
-        namespace,
-        method,
-        payload,
-        timeoutMs,
-      });
+      return await this.#oneLocalAtATime(uuid, () =>
+        localRequest({
+          ip: device.ip,
+          port: device.localPort,
+          key: this.session.key,
+          uuid: device.uuid,
+          namespace,
+          method,
+          payload,
+          timeoutMs,
+        }),
+      );
     } catch (err) {
       throw new Error(`${device.ip} did not answer (${err.message})`, { cause: err });
     }
+  }
+
+  /**
+   * Run local requests to one device strictly one after another.
+   *
+   * The firmware's HTTP server serves a single request at a time. Two commands
+   * that overlap — and they do, since a command, its read-back and a poll all
+   * fire at once — get ECONNRESET and ETIMEDOUT, which read as an unreachable
+   * device and demote the transport to the cloud for something that was only
+   * ever a queueing problem.
+   *
+   * The chain is per device: two different plugs still talk in parallel.
+   */
+  #oneLocalAtATime(uuid, task) {
+    const previous = this.localChains.get(uuid) ?? Promise.resolve();
+    // The next call must run whether this one resolves or rejects, so the chain
+    // is built on a swallowed copy while the caller still sees the real result.
+    const result = previous.then(task, task);
+    this.localChains.set(
+      uuid,
+      result.then(
+        () => {},
+        () => {},
+      ),
+    );
+    return result;
   }
 
   /** Force a message through the cloud broker. */

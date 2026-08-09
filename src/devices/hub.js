@@ -74,11 +74,20 @@ function hasThermostat(sub) {
 }
 
 /**
- * Anything behind a hub that opens and closes: a valve, but also a watering
- * timer (MST100), which is a plain relay as far as the hub is concerned.
+ * Anything behind a hub that opens and closes: a radiator valve, a relay.
+ *
+ * NOT a watering timer, even though it reports `togglex`. Confirmed against an
+ * MSH400: the hub accepts `Appliance.Hub.ToggleX` for an MST100, the timer
+ * clicks audibly, and reads back unchanged — the command is acknowledged and
+ * refused. Exposing it gives the user a switch that makes a noise, waters
+ * nothing, and always fails. `krahabb/meross_lan` suppresses it for the same
+ * reason.
  */
 function hasToggle(sub) {
-  return Boolean(sub.state?.togglex) || hasThermostat(sub) || isWateringTimer(sub);
+  if (isWateringTimer(sub)) {
+    return false;
+  }
+  return Boolean(sub.state?.togglex) || hasThermostat(sub);
 }
 
 /**
@@ -240,10 +249,7 @@ export function buildSubDeviceFeatures(sub, ids) {
 
   if (hasToggle(sub)) {
     features.push({
-      // On a watering timer this switch is NOT a watering trigger: the device
-      // accepts and adopts it, but nothing is watered. It enables the timer, so
-      // name it for what it does — "On/Off" invites the wrong expectation.
-      name: isWateringTimer(sub) ? 'Timer enabled' : 'On/Off',
+      name: 'On/Off',
       external_id: ids.feature(buildFeatureKey(FEATURE_KIND.ON_OFF, 0)),
       category: DEVICE_FEATURE_CATEGORIES.SWITCH,
       type: DEVICE_FEATURE_TYPES.SWITCH.BINARY,
