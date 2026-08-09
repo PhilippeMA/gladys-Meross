@@ -168,6 +168,10 @@ Toute réponse autre qu'une erreur de connexion signifie que l'appareil est joig
 la correction est côté réseau. La lecture des états et la plupart des commandes continuent
 de fonctionner par le cloud ; **l'arrosage, lui, exige ce canal local** sur les hubs MSH400.
 
+Le bouton **Diagnostiquer mes appareils** teste l'adresse locale port par port et affiche ce
+que chacun répond — c'est plus fiable qu'un `curl` à la main, car un appareil Meross accepte
+la connexion puis ignore en silence toute requête non signée.
+
 **Rien ne fonctionne et je veux savoir pourquoi** — l'intégration journalise tout ce qu'elle
 fait. Ouvrez les logs de l'intégration depuis l'interface Gladys (ou `docker logs` sur
 l'hôte) ; passez `LOG_LEVEL` à `debug` pour le détail complet, y compris chaque message

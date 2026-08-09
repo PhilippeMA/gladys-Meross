@@ -101,6 +101,40 @@ command the user is waiting on deserves a real attempt. When both refuse, the er
 both failures and the address to fix. **Gladys must be able to reach the hub on the LAN for
 watering to work on this hardware.**
 
+#### The missing carriage return
+
+Which it could not, for a long time, and the reason is worth recording.
+
+Meross firmware ends its HTTP status line with a bare `LF` where the RFC demands `CRLF`.
+`fetch` parses strictly, discards the entire response over that one byte, and reports:
+
+```
+TypeError: fetch failed
+```
+
+That message is indistinguishable from an unreachable device, and it sent this integration
+chasing routes, VLANs, client isolation, closed ports and firewalls across several rounds —
+while the hub was answering correctly the whole time. `nmap` said port 80 was open, `ping`
+and `arp` answered, and the transport still reported nothing.
+
+What broke the deadlock was making the failure describe itself: walking the `cause` chain
+instead of reading `cause.code`, which turned the same failure into
+
+```
+TypeError: fetch failed <- HTTPParserError: Response does not match the HTTP/1.1 protocol
+(Missing expected CR after response line)
+```
+
+The fix is `node:http` with `insecureHTTPParser: true`, which tolerates it. `fetch` has no
+equivalent option, so the LAN transport cannot use `fetch` at all. The option's name is
+alarming and the exposure is not: the peer is a device on the user's own network, addressed
+by IP, answering a request signed with the account key.
+
+The lesson generalises past this bug. **An error that cannot say what went wrong is a bug in
+its own right**, and worth fixing before the thing it is hiding — the timeout that lists
+what arrived instead, the refusal that carries its response body, the probe that names the
+port and path it used. Every one of those turned a dead end into a fact.
+
 **A reply is identified by its `messageId`, never by its method.** Meross devices answer some
 commands with a PUSH of the resulting state rather than a `SETACK`, so a client that requires
 an ack waits out its full timeout on an answer already in hand, then reports a failure for a

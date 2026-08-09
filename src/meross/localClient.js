@@ -10,6 +10,14 @@
 // round trip through Meross' servers, so a light reacts in milliseconds and
 // keeps working when the internet is down.
 //
+// This uses `node:http` and not `fetch`, and that is not a style choice. Meross
+// firmware ends its HTTP status line with a bare LF instead of CRLF. `fetch`
+// parses strictly and throws the whole response away over that one byte,
+// reporting `TypeError: fetch failed` — which reads exactly like an unreachable
+// device, and cost this integration days of chasing routes, firewalls and ports.
+// `node:http` accepts `insecureHTTPParser`, which tolerates it; `fetch` has no
+// equivalent.
+//
 // Two honest limitations, both handled by the caller (src/meross/client.js):
 //   1. we still need the account `key` from the cloud login to sign;
 //   2. some firmware revisions answer nothing on /config. There is no way to
@@ -20,6 +28,7 @@
 // `Appliance.System.All` -> `system.firmware.innerIp` (see client.js).
 // -----------------------------------------------------------------------------
 
+import http from 'node:http';
 import { createLogger } from '@gladysassistant/integration-sdk';
 import { buildMessage, isErrorNamespace, readPayloadError } from './protocol.js';
 
@@ -83,37 +92,36 @@ export async function localRequest({
 
   let response;
   try {
-    response = await fetch(url, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(message),
-      signal: AbortSignal.timeout(timeoutMs),
-    });
+    response = await postJson({ ip, port, path, body: JSON.stringify(message), timeoutMs });
   } catch (err) {
-    // Node reports every network failure as a bare "fetch failed" and hides the
-    // reason in `cause`. That reason is the whole diagnosis: EHOSTUNREACH and
-    // ENETUNREACH mean there is no route to the device's network, ECONNREFUSED
-    // means the host is there but nothing listens, and a timeout means packets
-    // are being dropped. Surface it.
+    // EHOSTUNREACH and ENETUNREACH mean there is no route to the device's
+    // network, ECONNREFUSED means the host is there but nothing listens, and a
+    // timeout means packets are being dropped. Each points somewhere different.
     throw new Error(`${describeNetworkError(err)} (${url})`, { cause: err });
   }
 
-  if (!response.ok) {
-    // Read the body before giving up. Meross firmware answers with non-standard
-    // statuses (470 has been seen on an MSH400) and puts the reason in the body
-    // — usually a normal Meross envelope with an error payload. Throwing on the
-    // status alone discards the only explanation there is.
-    // Read the headers too. An empty body says nothing; `server` or
-    // `content-type` often names the service that answered, which is the
-    // difference between "the Meross endpoint refused us" and "something else
-    // entirely is listening on this port".
+  if (response.status < 200 || response.status >= 300) {
+    // Report the body AND the headers. Meross firmware answers with
+    // non-standard statuses (470 on an MSH400) and the status alone means
+    // nothing; when the body is empty too, `server` or `content-type` is what
+    // separates "the Meross endpoint refused us" from "something else entirely
+    // is listening on this port".
     throw new Error(
-      `Meross LAN HTTP ${response.status} from ${url}: ${await readBody(response)}` +
-        ` [${describeHeaders(response)}]`,
+      `Meross LAN HTTP ${response.status} from ${url}: ${describeBody(response.text)}` +
+        ` [${describeHeaders(response.headers)}]`,
     );
   }
 
-  const body = await response.json();
+  let body;
+  try {
+    body = JSON.parse(response.text);
+  } catch (err) {
+    throw new Error(
+      `Meross device ${url} answered HTTP ${response.status} with something that is not ` +
+        `JSON: ${describeBody(response.text)}`,
+      { cause: err },
+    );
+  }
 
   // A device that refuses the message answers with an error namespace rather
   // than an HTTP status — most often a signature it does not accept.
@@ -135,36 +143,79 @@ export async function localRequest({
   return body?.payload ?? {};
 }
 
+/**
+ * POST a JSON body, tolerating the firmware's malformed response line.
+ *
+ * `insecureHTTPParser` is the entire reason this is not `fetch`: Meross ends
+ * its HTTP status line with a bare LF instead of CRLF, and a strict parser
+ * discards the whole response over that one missing byte. The option's name is
+ * alarming and the risk here is not: the peer is a device on the user's own
+ * network, reached by IP, answering a request we signed.
+ */
+function postJson({ ip, port, path, body, timeoutMs }) {
+  return new Promise((resolve, reject) => {
+    const request = http.request(
+      {
+        host: ip,
+        port,
+        path,
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Content-Length': Buffer.byteLength(body),
+        },
+        timeout: timeoutMs,
+        insecureHTTPParser: true,
+      },
+      (response) => {
+        const chunks = [];
+        response.on('data', (chunk) => chunks.push(chunk));
+        response.on('error', reject);
+        response.on('end', () =>
+          resolve({
+            status: response.statusCode,
+            headers: response.headers,
+            text: Buffer.concat(chunks).toString('utf8'),
+          }),
+        );
+      },
+    );
+
+    // `timeout` only fires an event: without destroying the request the socket
+    // stays open and this promise never settles.
+    request.on('timeout', () =>
+      request.destroy(Object.assign(new Error('socket timed out'), { code: 'ETIMEDOUT' })),
+    );
+    request.on('error', reject);
+    request.end(body);
+  });
+}
+
 /** The response headers worth naming when the body is empty. */
-function describeHeaders(response) {
+function describeHeaders(headers = {}) {
   const interesting = ['server', 'content-type', 'content-length', 'connection', 'allow'];
   const seen = interesting
-    .map((name) => [name, response.headers?.get?.(name)])
-    .filter(([, value]) => value)
-    .map(([name, value]) => `${name}: ${value}`);
+    .filter((name) => headers[name] !== undefined)
+    .map((name) => `${name}: ${headers[name]}`);
   return seen.length ? seen.join('; ') : 'no headers';
 }
 
 /** Whatever a failing response has to say, capped so a log line stays a line. */
-async function readBody(response, limit = 400) {
-  try {
-    const text = (await response.text()).trim();
-    if (!text) {
-      return 'empty body';
-    }
-    return text.length > limit ? `${text.slice(0, limit)}…` : text;
-  } catch (err) {
-    return `unreadable body (${err.message})`;
+function describeBody(text, limit = 400) {
+  const trimmed = (text ?? '').trim();
+  if (!trimmed) {
+    return 'empty body';
   }
+  return trimmed.length > limit ? `${trimmed.slice(0, limit)}…` : trimmed;
 }
 
 /**
- * The first network error code buried anywhere under a fetch rejection.
+ * The first network error code buried anywhere under a rejection.
  *
  * `err.cause` is not reliably the real error: Node nests causes, and when a
  * host resolves to several addresses it reports an `AggregateError` whose own
  * `code` is undefined and whose `errors` hold the real ones. Reading only
- * `cause.code` therefore yields a bare "fetch failed" precisely when the
+ * `cause.code` therefore yields a bare wrapper message precisely when the
  * diagnosis matters most.
  */
 function findErrorCode(err, depth = 0) {

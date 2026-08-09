@@ -157,6 +157,10 @@ Anything other than a connection error means the device is reachable. If it is n
 is on the network side. Reading states and most commands keep working through the cloud;
 **watering does need that local channel** on MSH400 hubs.
 
+The **Diagnose my devices** button tests the local address port by port and reports what each
+one answers — more reliable than a hand-written `curl`, since a Meross device accepts the
+connection and then silently ignores any request that is not correctly signed.
+
 **Nothing works, and I want to know why** — the integration logs everything it does. Open
 the integration logs from the Gladys UI (or `docker logs` on the host); set `LOG_LEVEL` to
 `debug` for the full detail, including every message exchanged with your devices.
