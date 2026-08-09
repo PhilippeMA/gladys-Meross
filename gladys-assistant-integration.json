@@ -6,16 +6,22 @@
     "en": "Read and control your Meross smart plugs, switches, lights and garage doors.",
     "fr": "Pilotez vos prises, interrupteurs, lampes et portes de garage Meross."
   },
-  "version": "1.0.0",
-  "docker_image": "ghcr.io/philippema/gladys-meross:1.0.0",
+  "version": "1.0.1",
+  "docker_image": "ghcr.io/philippema/gladys-meross:1.0.1",
   "gladys_version": ">=4.85.0",
   "cover_image": "https://raw.githubusercontent.com/PhilippeMA/gladys-Meross/main/cover.png",
-  "transports": ["local", "cloud"],
+  "transports": [
+    "local",
+    "cloud"
+  ],
   "config_schema": [
     {
       "key": "intro",
       "type": "section",
-      "label": { "en": "Connect your Meross account", "fr": "Connectez votre compte Meross" },
+      "label": {
+        "en": "Connect your Meross account",
+        "fr": "Connectez votre compte Meross"
+      },
       "description": {
         "en": "Sign in with the same email and password you use in the Meross mobile app. Your devices are then discovered automatically, with no pairing to redo. Meross allows a limited number of simultaneous sessions: if the app logs you out, sign in again there, both can coexist.",
         "fr": "Utilisez les mêmes identifiants que dans l'application mobile Meross. Vos appareils sont ensuite découverts automatiquement, sans réappairage. Meross limite le nombre de sessions simultanées : si l'application vous déconnecte, reconnectez-vous, les deux peuvent coexister."
@@ -23,25 +29,37 @@
       "links": [
         {
           "url": "https://www.meross.com/support/",
-          "label": { "en": "Meross support", "fr": "Support Meross" }
+          "label": {
+            "en": "Meross support",
+            "fr": "Support Meross"
+          }
         }
       ]
     },
     {
       "key": "email",
       "type": "string",
-      "label": { "en": "Meross email", "fr": "E-mail Meross" },
+      "label": {
+        "en": "Meross email",
+        "fr": "E-mail Meross"
+      },
       "description": {
         "en": "The email address of your Meross account.",
         "fr": "L'adresse e-mail de votre compte Meross."
       },
-      "placeholder": { "en": "you@example.com", "fr": "vous@exemple.com" },
+      "placeholder": {
+        "en": "you@example.com",
+        "fr": "vous@exemple.com"
+      },
       "required": true
     },
     {
       "key": "password",
       "type": "secret",
-      "label": { "en": "Meross password", "fr": "Mot de passe Meross" },
+      "label": {
+        "en": "Meross password",
+        "fr": "Mot de passe Meross"
+      },
       "description": {
         "en": "Stored encrypted by Gladys and only ever sent, hashed, to the Meross authentication server.",
         "fr": "Stocké chiffré par Gladys et envoyé uniquement, sous forme hachée, au serveur d'authentification Meross."
@@ -51,7 +69,10 @@
     {
       "key": "region",
       "type": "select",
-      "label": { "en": "Meross region", "fr": "Région Meross" },
+      "label": {
+        "en": "Meross region",
+        "fr": "Région Meross"
+      },
       "description": {
         "en": "The region your Meross account was created in. Pick the wrong one and the login is refused.",
         "fr": "La région de création de votre compte Meross. En cas d'erreur, la connexion est refusée."
@@ -59,16 +80,43 @@
       "required": true,
       "default": "eu",
       "options": [
-        { "value": "eu", "label": { "en": "Europe", "fr": "Europe" } },
-        { "value": "us", "label": { "en": "America", "fr": "Amérique" } },
-        { "value": "ap", "label": { "en": "Asia / Pacific", "fr": "Asie / Pacifique" } },
-        { "value": "global", "label": { "en": "Global (default)", "fr": "Global (par défaut)" } }
+        {
+          "value": "eu",
+          "label": {
+            "en": "Europe",
+            "fr": "Europe"
+          }
+        },
+        {
+          "value": "us",
+          "label": {
+            "en": "America",
+            "fr": "Amérique"
+          }
+        },
+        {
+          "value": "ap",
+          "label": {
+            "en": "Asia / Pacific",
+            "fr": "Asie / Pacifique"
+          }
+        },
+        {
+          "value": "global",
+          "label": {
+            "en": "Global (default)",
+            "fr": "Global (par défaut)"
+          }
+        }
       ]
     },
     {
       "key": "poll_frequency",
       "type": "select",
-      "label": { "en": "Refresh interval", "fr": "Intervalle de rafraîchissement" },
+      "label": {
+        "en": "Refresh interval",
+        "fr": "Intervalle de rafraîchissement"
+      },
       "description": {
         "en": "How often metering plugs and hub sensors are read. On/off states arrive in real time and are never polled, so the slowest setting suits most homes.",
         "fr": "Fréquence de lecture des prises avec mesure et des capteurs de hub. Les états on/off arrivent en temps réel : l'intervalle le plus lent convient à la plupart des installations."
@@ -76,18 +124,57 @@
       "required": false,
       "default": "60000",
       "options": [
-        { "value": "60000", "label": { "en": "Every minute", "fr": "Chaque minute" } },
-        { "value": "30000", "label": { "en": "Every 30 seconds", "fr": "Toutes les 30 secondes" } },
-        { "value": "15000", "label": { "en": "Every 15 seconds", "fr": "Toutes les 15 secondes" } },
-        { "value": "10000", "label": { "en": "Every 10 seconds", "fr": "Toutes les 10 secondes" } },
-        { "value": "2000", "label": { "en": "Every 2 seconds", "fr": "Toutes les 2 secondes" } },
-        { "value": "1000", "label": { "en": "Every second", "fr": "Chaque seconde" } }
+        {
+          "value": "60000",
+          "label": {
+            "en": "Every minute",
+            "fr": "Chaque minute"
+          }
+        },
+        {
+          "value": "30000",
+          "label": {
+            "en": "Every 30 seconds",
+            "fr": "Toutes les 30 secondes"
+          }
+        },
+        {
+          "value": "15000",
+          "label": {
+            "en": "Every 15 seconds",
+            "fr": "Toutes les 15 secondes"
+          }
+        },
+        {
+          "value": "10000",
+          "label": {
+            "en": "Every 10 seconds",
+            "fr": "Toutes les 10 secondes"
+          }
+        },
+        {
+          "value": "2000",
+          "label": {
+            "en": "Every 2 seconds",
+            "fr": "Toutes les 2 secondes"
+          }
+        },
+        {
+          "value": "1000",
+          "label": {
+            "en": "Every second",
+            "fr": "Chaque seconde"
+          }
+        }
       ]
     },
     {
       "key": "watering_duration",
       "type": "number",
-      "label": { "en": "Watering duration (min)", "fr": "Durée d'arrosage (min)" },
+      "label": {
+        "en": "Watering duration (min)",
+        "fr": "Durée d'arrosage (min)"
+      },
       "description": {
         "en": "How long a watering runs when started from Gladys. Each timer can override it from its own Watering duration setting.",
         "fr": "Durée d'un arrosage lancé depuis Gladys. Chaque programmateur peut la remplacer via son propre réglage « Watering duration »."
@@ -101,7 +188,10 @@
   "actions": [
     {
       "key": "test_connection",
-      "label": { "en": "Test the connection", "fr": "Tester la connexion" },
+      "label": {
+        "en": "Test the connection",
+        "fr": "Tester la connexion"
+      },
       "description": {
         "en": "Signs in to Meross and reports how many devices the account holds.",
         "fr": "Se connecte à Meross et indique combien d'appareils contient le compte."
@@ -110,7 +200,10 @@
     },
     {
       "key": "refresh_devices",
-      "label": { "en": "Refresh the device list", "fr": "Rafraîchir la liste des appareils" },
+      "label": {
+        "en": "Refresh the device list",
+        "fr": "Rafraîchir la liste des appareils"
+      },
       "description": {
         "en": "Re-reads the account after adding or renaming a device in the Meross app.",
         "fr": "Relit le compte après l'ajout ou le renommage d'un appareil dans l'application Meross."
@@ -119,7 +212,10 @@
     },
     {
       "key": "diagnose",
-      "label": { "en": "Diagnose my devices", "fr": "Diagnostiquer mes appareils" },
+      "label": {
+        "en": "Diagnose my devices",
+        "fr": "Diagnostiquer mes appareils"
+      },
       "description": {
         "en": "Lists each device, what it can do, how the integration handled it, and reads the capabilities not supported yet.",
         "fr": "Liste chaque appareil, ses capacités, la façon dont l'intégration l'a traité, et lit les fonctions pas encore supportées."
