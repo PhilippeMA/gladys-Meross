@@ -61,6 +61,7 @@ test('a message carries the full Meross envelope', () => {
       namespace: 'Appliance.System.All',
       method: 'GET',
       payloadVersion: 1,
+      triggerSrc: 'MerossClient',
       from: '/app/42-abc/subscribe',
       timestamp: 1700000001,
       timestampMs: 0,
@@ -68,6 +69,36 @@ test('a message carries the full Meross envelope', () => {
     },
     payload: {},
   });
+});
+
+test('triggerSrc is sent by default and can be dropped for a probe', () => {
+  // meross_lan sends `triggerSrc` on every message and is the only client known
+  // to drive an MST100, so it is the default here. A firmware that routes or
+  // authorises by trigger source sees a message without it as coming from
+  // nowhere — which is exactly the kind of thing that gets silently swallowed.
+  const withDefault = buildMessage({ namespace: 'Appliance.System.All', method: 'GET', key: 'k' });
+  assert.equal(withDefault.header.triggerSrc, 'MerossClient');
+
+  const without = buildMessage({
+    namespace: 'Appliance.System.All',
+    method: 'GET',
+    key: 'k',
+    triggerSrc: null,
+  });
+  assert.equal('triggerSrc' in without.header, false);
+
+  // The signature covers messageId, key and timestamp only, so varying the
+  // header cannot invalidate it — which is what makes probing headers safe.
+  const probed = buildMessage({
+    namespace: 'Appliance.System.All',
+    method: 'GET',
+    key: 'k',
+    messageId: 'c'.repeat(32),
+    timestamp: 1700000002,
+    triggerSrc: 'Device',
+    from: 'MerossClient',
+  });
+  assert.equal(probed.header.sign, md5(`${'c'.repeat(32)}k1700000002`));
 });
 
 test('generateMessageId returns a fresh 32-hex-char id', () => {

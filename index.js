@@ -218,6 +218,19 @@ gladys.onAction('test_watering', async () => {
               : `ANSWERED: ${JSON.stringify(result.payload)}`),
         );
       }
+
+      // The payload dimension is exhausted — six shapes, all either swallowed
+      // or refused. The header never was: every shape above carries the same
+      // one, and the app's header was never compared against ours, only its
+      // payload.
+      for (const result of await client.probeWateringLocalHeaders(device, sub.id)) {
+        lines.push(
+          `  header [${result.label}] -> ` +
+            (result.error
+              ? `FAILED: ${result.error}`
+              : `ANSWERED: ${JSON.stringify(result.payload)}`),
+        );
+      }
     }
   }
 

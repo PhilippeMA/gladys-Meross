@@ -32,6 +32,7 @@ import {
   SUB_DEVICE_ID_KEY,
   WATER_ONOFF,
   buildMultiplePayload,
+  TRIGGER_SRC,
 } from './protocol.js';
 
 const logger = createLogger({ name: 'meross-client' });
@@ -817,6 +818,56 @@ export class MerossClient {
    * running, so this can be run at any moment without watering anything. The
    * GET-only probe above stays GET-only.
    */
+  async probeWateringLocalHeaders(device, subDeviceId) {
+    if (!device.ip) {
+      return [];
+    }
+
+    // One payload — the canonical stop, the shape confirmed against hardware —
+    // and the HEADER varied around it. The payload dimension is exhausted: six
+    // shapes, all either swallowed or refused. The header is the one part of
+    // the message that was never compared against the app's, and the signature
+    // covers only messageId, key and timestamp, so varying it stays valid.
+    const payload = { control: [{ subId: subDeviceId, channel: 0, onoff: WATER_ONOFF.STOP }] };
+
+    const variants = [
+      { label: 'as sent today', options: {} },
+      { label: 'no triggerSrc', options: { triggerSrc: null } },
+      { label: 'triggerSrc=Device', options: { triggerSrc: 'Device' } },
+      { label: 'triggerSrc=CloudControl', options: { triggerSrc: 'CloudControl' } },
+      // The full meross_lan shape: `from` is a name, not a URL, and no uuid.
+      {
+        label: 'meross_lan header',
+        options: { from: TRIGGER_SRC, includeUuid: false, triggerSrc: TRIGGER_SRC },
+      },
+      { label: 'no uuid', options: { includeUuid: false } },
+    ];
+
+    const results = [];
+
+    for (const { label, options } of variants) {
+      try {
+        const reply = await this.#oneLocalAtATime(device.uuid, () =>
+          localRequest({
+            ip: device.ip,
+            port: device.localPort,
+            key: this.session?.key,
+            uuid: device.uuid,
+            namespace: NAMESPACE.CONTROL_WATER,
+            method: METHOD.SET,
+            payload,
+            ...options,
+          }),
+        );
+        results.push({ label, ok: true, payload: reply });
+      } catch (err) {
+        results.push({ label, ok: false, error: err.message });
+      }
+    }
+
+    return results;
+  }
+
   async probeWateringSet(device, subDeviceId, { durationSeconds = 900 } = {}) {
     const results = [];
     const shapes = wateringStopShapes(subDeviceId, durationSeconds);

@@ -29,6 +29,12 @@
 
 import { createHash, randomUUID } from 'node:crypto';
 
+/**
+ * The `triggerSrc` every message carries, and the value `from` takes when it
+ * does not name a reply topic. Both are what `krahabb/meross_lan` sends.
+ */
+export const TRIGGER_SRC = 'MerossClient';
+
 /** Namespaces used by this integration. */
 export const NAMESPACE = {
   // System
@@ -320,6 +326,7 @@ export function buildMessage({
   messageId = generateMessageId(),
   timestamp = Math.floor(Date.now() / 1000),
   uuid,
+  triggerSrc = TRIGGER_SRC,
 }) {
   return {
     header: {
@@ -327,6 +334,11 @@ export function buildMessage({
       namespace,
       method,
       payloadVersion: 1,
+      // Who is asking. `krahabb/meross_lan` sends this on every message, and it
+      // is the only client known to drive an MST100 — worth matching, since a
+      // firmware that routes or authorises by trigger source would treat a
+      // message without it as coming from nowhere.
+      ...(triggerSrc ? { triggerSrc } : {}),
       from,
       timestamp,
       timestampMs: 0,

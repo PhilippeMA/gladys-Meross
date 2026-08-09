@@ -330,3 +330,62 @@ test('a failed LAN call does not wedge the queue behind it', async () => {
     server.close();
   }
 });
+
+test('the header is probeable without breaking the signature', async () => {
+  // The signature covers messageId, key and timestamp only, so the rest of the
+  // header can be varied freely — which is what makes it possible to ask a
+  // firmware which header it will accept.
+  let sent = null;
+  const body = merossReply({});
+  const { server, port } = await rawServer((requestBody) => {
+    sent = JSON.parse(requestBody);
+    return `HTTP/1.1 200 OK\r\nContent-Length: ${Buffer.byteLength(body)}\r\n\r\n${body}`;
+  });
+
+  try {
+    await localRequest({
+      ip: '127.0.0.1',
+      port,
+      key: KEY,
+      uuid: 'the-uuid',
+      namespace: 'Appliance.Control.Water',
+      method: 'SET',
+      from: 'MerossClient',
+      triggerSrc: 'Device',
+      includeUuid: false,
+    });
+
+    assert.equal(sent.header.from, 'MerossClient', 'a name, not the URL');
+    assert.equal(sent.header.triggerSrc, 'Device');
+    assert.equal('uuid' in sent.header, false);
+    assert.match(sent.header.sign, /^[0-9a-f]{32}$/);
+  } finally {
+    server.close();
+  }
+});
+
+test('by default a local request carries triggerSrc and the uuid', async () => {
+  let sent = null;
+  const body = merossReply({});
+  const { server, port } = await rawServer((requestBody) => {
+    sent = JSON.parse(requestBody);
+    return `HTTP/1.1 200 OK\r\nContent-Length: ${Buffer.byteLength(body)}\r\n\r\n${body}`;
+  });
+
+  try {
+    await localRequest({
+      ip: '127.0.0.1',
+      port,
+      key: KEY,
+      uuid: 'the-uuid',
+      namespace: 'Appliance.System.All',
+      method: 'GET',
+    });
+
+    assert.equal(sent.header.triggerSrc, 'MerossClient');
+    assert.equal(sent.header.uuid, 'the-uuid');
+    assert.match(sent.header.from, /^http:\/\/127\.0\.0\.1:\d+\/config$/);
+  } finally {
+    server.close();
+  }
+});
