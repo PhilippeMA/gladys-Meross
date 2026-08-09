@@ -12,6 +12,7 @@
 //       "namespace": "Appliance.Control.ToggleX",
 //       "method": "SET",
 //       "payloadVersion": 1,
+//       "triggerSrc": "MerossClient",
 //       "from": "/app/<userId>-<appId>/subscribe",
 //       "timestamp": 1699999999,
 //       "timestampMs": 0,
@@ -30,8 +31,15 @@
 import { createHash, randomUUID } from 'node:crypto';
 
 /**
- * The `triggerSrc` every message carries, and the value `from` takes when it
- * does not name a reply topic. Both are what `krahabb/meross_lan` sends.
+ * The `triggerSrc` every message carries.
+ *
+ * This is not cosmetic. Confirmed against an MSH400: a SET on
+ * `Appliance.Control.Water` whose header has no `triggerSrc` makes the hub
+ * beep, flash its LED red and RESTART — it never answers, on either transport.
+ * With the field present the same command waters. GETs survive without it,
+ * which fits a firmware that reads it only to attribute a state change.
+ *
+ * The value is the one `krahabb/meross_lan` sends.
  */
 export const TRIGGER_SRC = 'MerossClient';
 
@@ -46,8 +54,6 @@ export const NAMESPACE = {
   CONTROL_TOGGLEX: 'Appliance.Control.ToggleX',
   CONTROL_LIGHT: 'Appliance.Control.Light',
   GARAGE_DOOR_STATE: 'Appliance.GarageDoor.State',
-  // Batching: carries complete messages, each dispatched internally.
-  CONTROL_MULTIPLE: 'Appliance.Control.Multiple',
   // Measurements
   CONTROL_ELECTRICITY: 'Appliance.Control.Electricity',
   CONTROL_CONSUMPTIONX: 'Appliance.Control.ConsumptionX',
@@ -334,10 +340,8 @@ export function buildMessage({
       namespace,
       method,
       payloadVersion: 1,
-      // Who is asking. `krahabb/meross_lan` sends this on every message, and it
-      // is the only client known to drive an MST100 — worth matching, since a
-      // firmware that routes or authorises by trigger source would treat a
-      // message without it as coming from nowhere.
+      // Who is asking. Omitting this crashes an MSH400 outright — see
+      // TRIGGER_SRC above. It is not optional in practice.
       ...(triggerSrc ? { triggerSrc } : {}),
       from,
       timestamp,
@@ -348,25 +352,6 @@ export function buildMessage({
       sign: signMessage(messageId, key, timestamp),
     },
     payload,
-  };
-}
-
-/**
- * Wrap messages in `Appliance.Control.Multiple`, the batching envelope.
- *
- * Each entry is a COMPLETE message — its own header, its own signature — and
- * the device unpacks them and dispatches each one internally. That inner
- * dispatch is the interesting part: it is a different path from the one a
- * top-level message takes, which is why it is worth trying for a namespace the
- * firmware accepts and then ignores.
- *
- * `maxCmdNum` in the device's ability entry caps how many fit in one batch.
- */
-export function buildMultiplePayload(messages, key) {
-  return {
-    multiple: messages.map(({ namespace, method, payload }) =>
-      buildMessage({ namespace, method, payload, key }),
-    ),
   };
 }
 

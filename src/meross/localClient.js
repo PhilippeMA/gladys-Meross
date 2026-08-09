@@ -69,10 +69,6 @@ export async function localRequest({
   timeoutMs = DEFAULT_TIMEOUT_MS,
   port = DEFAULT_PORT,
   path = DEFAULT_PATH,
-  // Header variants, for probing what a firmware will accept.
-  from,
-  triggerSrc,
-  includeUuid = true,
 }) {
   if (!ip) {
     throw new Error('No LAN address known for this device');
@@ -88,9 +84,8 @@ export async function localRequest({
     method,
     payload,
     key,
-    from: from ?? url,
-    uuid: includeUuid ? uuid : undefined,
-    triggerSrc,
+    from: url,
+    uuid,
   });
 
   logger.debug(`LAN ${method} ${namespace} -> ${url}`);

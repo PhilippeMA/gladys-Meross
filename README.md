@@ -49,10 +49,10 @@ wrong mapping would mislabel the modes in the UI.
 
 #### Watering timers (MST100 on an MSH400 sprinkler hub)
 
-A sprinkler timer is not a relay: its `Appliance.Hub.ToggleX` is accepted and adopted by the
-device but waters nothing. Watering runs through `Appliance.Control.Water`, whose payload
-defeats every reasonable guess — which is why it had to come from a capture of the Meross
-Android app rather than from probing:
+A sprinkler timer is not a relay: the hub accepts `Appliance.Hub.ToggleX` for one and the
+timer never adopts it. Watering runs through `Appliance.Control.Water`, whose payload defeats
+every reasonable guess — which is why it had to come from a capture of the Meross Android app
+rather than from probing:
 
 ```json
 { "control": [{ "channel": 0, "dura": 900, "onoff": 1, "subId": "1B0091AFC74E" }] }
@@ -79,69 +79,32 @@ The switch is also cleared by a local timer when the duration elapses. That is n
 authority — the next poll is — it just spares the user a switch left visibly on for up to a
 minute after the water stopped.
 
-**On the MSH400 firmware, a watering SET only works over the LAN** — and the cloud does not
-say so. Measured, not assumed:
+#### The header that crashed the hub
 
-| over the cloud                     | answer         |
-| ---------------------------------- | -------------- |
-| `GET {"control":[]}`               | the full state |
-| `SET {"control":{…}}` (object)     | `error 5000`   |
-| `SET {"control":[{…}]}` (list, ×5) | nothing at all |
-| the same list over the LAN         | acted on       |
+Watering refused to start for a long time, on both transports, and the reason was one
+missing header field.
 
-The refusal of the object form is the informative one: the hub parsed the message, rejected
-the shape and replied, so SET on this namespace **is** dispatched over MQTT. A well-formed
-list is then swallowed in silence. There is no payload to fix — five shapes, including the
-one the Meross app sends and the one meross_lan sends, all met the same silence.
+`Appliance.Control.Water` is a SET, and this firmware reads `header.triggerSrc` when it
+handles one — to attribute the state change, most likely. Without the field it does not
+refuse: it **beeps, flashes its LED red and restarts**. The symptoms read as anything but
+that. Over the LAN the socket is accepted and dies with no reply. Over MQTT the command
+times out and is followed by a burst of `PUSH Appliance.System.Online`, which is what a
+device sends when it reconnects to the broker after rebooting. GETs are unaffected, because
+a read has nobody to attribute anything to.
 
-So the command tries the normal routing first (a hub that honours the cloud needs nothing
-else), and on silence falls back to a direct POST to the hub — even when the start-up
-reachability probe said the address was unreachable, since that probe is one packet and a
-command the user is waiting on deserves a real attempt. When both refuse, the error names
-both failures and the address to fix. **Gladys must be able to reach the hub on the LAN for
-watering to work on this hardware.**
+So every message now carries `triggerSrc: "MerossClient"`, the value `krahabb/meross_lan`
+sends. That is the fix; the payload was never wrong.
 
-#### The missing carriage return
+What made this expensive was comparing the wrong thing. Seven payload shapes were measured
+against the app's captured request — and all seven carried an identical header, so they
+were one experiment repeated seven times. The header was the only part never compared, and
+it was the only part that differed.
 
-Which it could not, for a long time, and the reason is worth recording.
+Two tests pin it: one on the transport, one end-to-end from the Gladys feature down to the
+bytes, so a refactor cannot route around it and start rebooting people's hubs again.
 
-Meross firmware ends its HTTP status line with a bare `LF` where the RFC demands `CRLF`.
-`fetch` parses strictly, discards the entire response over that one byte, and reports:
-
-```
-TypeError: fetch failed
-```
-
-That message is indistinguishable from an unreachable device, and it sent this integration
-chasing routes, VLANs, client isolation, closed ports and firewalls across several rounds —
-while the hub was answering correctly the whole time. `nmap` said port 80 was open, `ping`
-and `arp` answered, and the transport still reported nothing.
-
-What broke the deadlock was making the failure describe itself: walking the `cause` chain
-instead of reading `cause.code`, which turned the same failure into
-
-```
-TypeError: fetch failed <- HTTPParserError: Response does not match the HTTP/1.1 protocol
-(Missing expected CR after response line)
-```
-
-The fix is `node:http` with `insecureHTTPParser: true`, which tolerates it. `fetch` has no
-equivalent option, so the LAN transport cannot use `fetch` at all. The option's name is
-alarming and the exposure is not: the peer is a device on the user's own network, addressed
-by IP, answering a request signed with the account key.
-
-The lesson generalises past this bug. **An error that cannot say what went wrong is a bug in
-its own right**, and worth fixing before the thing it is hiding — the timeout that lists
-what arrived instead, the refusal that carries its response body, the probe that names the
-port and path it used. Every one of those turned a dead end into a fact.
-
-**A reply is identified by its `messageId`, never by its method.** Meross devices answer some
-commands with a PUSH of the resulting state rather than a `SETACK`, so a client that requires
-an ack waits out its full timeout on an answer already in hand, then reports a failure for a
-command that worked. Here a reply is whatever carries the `messageId` we sent and either our
-namespace or an error namespace — `krahabb/meross_lan` matches the same way. A PUSH that
-resolves a command then continues through the push path as well, because it is genuinely both
-an answer and a state announcement.
+Watering still tries the normal routing first and falls back to a direct POST if the cloud
+stays silent, and the error names both channels when neither works.
 
 **A watering timer gets no on/off switch**, even though it reports `togglex` and the generic
 rule would give it one. The hub accepts `Appliance.Hub.ToggleX` for an MST100, the timer

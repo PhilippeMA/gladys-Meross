@@ -478,20 +478,17 @@ export async function onSetValue(client, { gladys, device, subDeviceId, kind, va
 /**
  * Send a watering command, over whichever channel the hub will act on.
  *
- * `Appliance.Control.Water` is not evenly served. On the MSH400 firmware it
- * answers a GET over the cloud, and answers a malformed SET there with
- * `error 5000` — so the namespace IS dispatched — yet a well-formed SET, in the
- * exact shape the Meross app sends, is swallowed without a word. The same
- * message over the LAN is acted on immediately.
- *
- * "Swallowed" is a trait of one firmware, not a rule, so the normal routing
- * still gets the first go: on a hub that honours the cloud, nothing more is
- * needed. When it stays silent, the LAN is tried even if the start-up probe
- * said the address was unreachable — that probe is one packet, and a command
- * the user is waiting on deserves a real attempt.
+ * The normal routing goes first — LAN when the hub answers there, cloud
+ * otherwise. If the cloud stays silent, the local address is tried even when
+ * the start-up probe said it was unreachable: that probe is one packet, and a
+ * command the user is waiting on deserves a real attempt.
  *
  * If both refuse, the error names both failures. A user cannot act on
  * "watering does not work"; they can act on "no route to 192.168.50.24".
+ *
+ * Note that a watering SET is only safe to send at all because every message
+ * carries `triggerSrc` — without it this firmware reboots rather than answers.
+ * See TRIGGER_SRC in src/meross/protocol.js.
  */
 async function sendWateringCommand(client, device, payload, context = '') {
   // Log the message ITSELF, not a summary of it. A command that is accepted and

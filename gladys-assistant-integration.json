@@ -125,15 +125,6 @@
         "fr": "Liste chaque appareil, ses capacités, la façon dont l'intégration l'a traité, et lit les fonctions pas encore supportées."
       },
       "timeout_seconds": 120
-    },
-    {
-      "key": "test_watering",
-      "label": { "en": "Test the watering command", "fr": "Tester la commande d'arrosage" },
-      "description": {
-        "en": "Finds out which command shape your sprinkler hub accepts. Only ever sends a stop, so it never waters anything.",
-        "fr": "Cherche quelle forme de commande votre hub d'arrosage accepte. N'envoie que des arrêts : cela n'arrose jamais rien."
-      },
-      "timeout_seconds": 120
     }
   ]
 }

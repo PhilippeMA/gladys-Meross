@@ -187,50 +187,6 @@ gladys.onAction('diagnose', async () => {
   return report;
 });
 
-// Watering refuses to start over the cloud: the hub answers a GET on
-// `Appliance.Control.Water` and ignores a SET, without even the `error 5000` a
-// bad payload earns. This action settles whether ANY payload shape is accepted,
-// by trying each one and reporting what came back.
-//
-// Unlike `diagnose`, this one writes — and it is built so that writing is free:
-// every shape it sends is a STOP, which does nothing when nothing is running.
-gladys.onAction('test_watering', async () => {
-  if (!client) {
-    throw new Error('Not connected to Meross: check the configuration and the logs.');
-  }
-
-  const lines = [];
-
-  for (const device of client.getDevices()) {
-    for (const sub of device.subDevices?.values() ?? []) {
-      if (!sub.type?.startsWith('mst')) {
-        continue;
-      }
-
-      lines.push(`${sub.name} (${sub.type}, id ${sub.id}) on hub ${device.name}:`);
-
-      // Headers only. The payload dimension is settled: seven shapes, every
-      // well-formed one swallowed and every malformed one refused, and a
-      // refused SET costs the hub a restart — it beeps, flashes red and comes
-      // back. Re-running that sweep would buy nothing and cost seven reboots.
-      for (const result of await client.probeWateringLocalHeaders(device, sub.id)) {
-        lines.push(
-          `  header [${result.label}] -> ` +
-            (result.error
-              ? `FAILED: ${result.error}`
-              : `ANSWERED: ${JSON.stringify(result.payload)}`),
-        );
-      }
-    }
-  }
-
-  const report = lines.length
-    ? lines.join('\n')
-    : 'No watering timer on this Meross account — nothing to test.';
-  logger.info(`Watering SET test:\n${report}`);
-  return report;
-});
-
 // --- Configuration updated by the user ---------------------------------------
 gladys.onConfigUpdated(async (newConfig) => {
   logger.info('onConfigUpdated -> new configuration received');

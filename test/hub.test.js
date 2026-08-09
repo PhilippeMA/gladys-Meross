@@ -6,7 +6,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { isHub, MerossClient, mergeHubPayload, mergeSubIdPayload } from '../src/meross/client.js';
-import { HUB_PAYLOAD_KEYS, NAMESPACE } from '../src/meross/protocol.js';
+import { buildMessage, HUB_PAYLOAD_KEYS, NAMESPACE } from '../src/meross/protocol.js';
 import { TIMEOUT_ERROR_CODE } from '../src/meross/mqttClient.js';
 import { parseDeviceExternalId, subDevicePlatformId } from '../src/devices/featureIds.js';
 import * as hub from '../src/devices/hub.js';
@@ -752,4 +752,34 @@ test('the watering command logs the exact message and the exact answer', async (
   assert.match(all, /"dura":900/, 'the payload verbatim');
   assert.match(all, /timer enabled: 0/, 'the state the timer was in');
   assert.match(all, /hub answered/, 'and what came back');
+});
+
+test('the watering command goes out with triggerSrc in its header', async () => {
+  // End to end, from the Gladys feature down to the bytes on the wire. The
+  // transport-level guard covers `localRequest`; this one covers the path that
+  // actually carries a watering, so a future refactor cannot route around it
+  // and quietly start rebooting people's hubs again.
+  const device = wateringHub();
+  const client = createCountingClient();
+
+  const sent = [];
+  client.request = async (uuid, namespace, method, payload) => {
+    sent.push(
+      buildMessage({ namespace, method, payload, key: 'k', from: 'http://x/config', uuid }),
+    );
+    return {};
+  };
+
+  await hub.onSetValue(client, {
+    gladys: createFakeGladys(),
+    config: { watering_duration: 15 },
+    device,
+    subDeviceId: '1B0091AFC74E',
+    kind: 'watering',
+    value: 1,
+  });
+
+  assert.equal(sent.length, 1);
+  assert.equal(sent[0].header.triggerSrc, 'MerossClient');
+  assert.equal(sent[0].header.namespace, 'Appliance.Control.Water');
 });

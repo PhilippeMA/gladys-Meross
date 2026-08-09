@@ -30,8 +30,6 @@ import {
   NAMESPACE,
   namespacePayloadKeys,
   SUB_DEVICE_ID_KEY,
-  WATER_ONOFF,
-  TRIGGER_SRC,
 } from './protocol.js';
 
 const logger = createLogger({ name: 'meross-client' });
@@ -74,15 +72,6 @@ export const PROBE_NAMESPACES = [
  * timeout per shape tried, and there are several shapes.
  */
 const PROBE_TIMEOUT_MS = 6000;
-
-/**
- * How long to leave a hub alone after a watering SET it did not survive.
- *
- * An MSH400 answers a refused SET on this namespace by beeping, flashing its
- * LED red and restarting. Firing the next probe immediately would measure the
- * reboot rather than the message under test.
- */
-const REBOOT_SETTLE_MS = 8000;
 
 /**
  * Ports worth trying for the local endpoint. 80 is the documented one; 5010 is
@@ -772,74 +761,6 @@ export class MerossClient {
         results.push({ port, path, ok: true, answered: Object.keys(payload ?? {}) });
       } catch (err) {
         results.push({ port, path, ok: false, error: err.message });
-      }
-    }
-
-    return results;
-  }
-
-  /**
-   * Ask the hub which HEADER it will accept on a watering SET.
-   *
-   * The payload dimension is settled: seven shapes, every well-formed one
-   * swallowed and every malformed one refused with `error 5000`. What was never
-   * varied is the header — all seven carried an identical one, so they were a
-   * single experiment repeated.
-   *
-   * The payload here is the canonical stop, so this cannot water anything. That
-   * matters more than usual: a watering SET this firmware refuses does not
-   * simply fail — the hub beeps, its LED goes red and back to green, and it
-   * stops answering. It restarts. Each attempt therefore costs the device a
-   * reboot, which is why the likeliest header goes first, why the run stops at
-   * the first answer, and why there is a pause between attempts.
-   */
-  async probeWateringLocalHeaders(device, subDeviceId, { settleMs = REBOOT_SETTLE_MS } = {}) {
-    if (!device.ip) {
-      return [];
-    }
-
-    const payload = { control: [{ subId: subDeviceId, channel: 0, onoff: WATER_ONOFF.STOP }] };
-
-    const variants = [
-      // The full meross_lan shape: `from` is a name, not a URL, and no uuid.
-      {
-        label: 'meross_lan header',
-        options: { from: TRIGGER_SRC, includeUuid: false, triggerSrc: TRIGGER_SRC },
-      },
-      { label: 'triggerSrc=Device', options: { triggerSrc: 'Device' } },
-      { label: 'triggerSrc=CloudControl', options: { triggerSrc: 'CloudControl' } },
-      { label: 'no uuid', options: { includeUuid: false } },
-      { label: 'as sent today', options: {} },
-      { label: 'no triggerSrc', options: { triggerSrc: null } },
-    ];
-
-    const results = [];
-
-    for (const { label, options } of variants) {
-      if (results.length > 0) {
-        // Give a hub that just restarted time to come back, or the next variant
-        // measures the reboot rather than the header it was meant to test.
-        await new Promise((resolve) => setTimeout(resolve, settleMs));
-      }
-
-      try {
-        const reply = await this.#oneLocalAtATime(device.uuid, () =>
-          localRequest({
-            ip: device.ip,
-            port: device.localPort,
-            key: this.session?.key,
-            uuid: device.uuid,
-            namespace: NAMESPACE.CONTROL_WATER,
-            method: METHOD.SET,
-            payload,
-            ...options,
-          }),
-        );
-        results.push({ label, ok: true, payload: reply });
-        // Found one. Every further attempt would only cost another restart.
-        return results;
-      } catch (err) {
-        results.push({ label, ok: false, error: err.message });
       }
     }
 

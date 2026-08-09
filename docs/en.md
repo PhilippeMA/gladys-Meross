@@ -50,12 +50,10 @@ The duration is per timer: set it on the device, or set a default for all of the
 integration configuration. Gladys reads back the duration the timer itself remembers, so it
 survives a restart.
 
-**Watering only works over your local network** (MSH400 firmware). The hub does receive the
-command sent through the Meross servers, but ignores it without answering; only a command
-sent directly to it is acted on. So the machine running Gladys must be able to reach your
-hub's IP address. If it cannot, the switch fails and the error names both channels and the
-address that did not answer. **Diagnose my devices** shows each device's LAN address and the channel it
-is using.
+Gladys talks to your hub directly on your local network when it can reach it, and through
+the Meross servers otherwise. If a watering fails, the error names both channels and the
+address that did not answer; **Diagnose my devices** shows each device's local address and
+the channel actually in use.
 
 Watering **schedules** stay in the Meross app: the hub does not let anything else read or
 change them.
@@ -132,12 +130,6 @@ whether the device was seen, what it advertises, and whether the integration cou
 If it is a sensor that should be behind a hub, check it is paired to that hub in the Meross
 app. The integration also logs a line for every device it skips, naming what it saw.
 
-**Watering does not start and Gladys mentions both channels** — on the MSH400 firmware a
-watering command is only acted on over the local network: the hub receives it from the cloud
-and ignores it without a word. Gladys tries the cloud, then the local address, and the error
-names both failures. The machine running Gladys therefore has to reach the hub directly —
-see the next entry.
-
 **My device's local address does not answer** — the integration falls back to the cloud and
 says so in the logs, with the reason:
 
@@ -147,11 +139,10 @@ says so in the logs, with the reason:
   device any more (a DHCP lease that moved). Use **Refresh the device list**.
 - _no answer before the timeout_ — a firewall is dropping the packets.
 
-To confirm from the machine hosting Gladys:
-
-```bash
-curl -m 3 -X POST http://<device-ip>/config -d '{}'
-```
+Click **Diagnose my devices** to test it properly: it sends a real, correctly signed request
+and reports what each address answers. A hand-written `curl` cannot tell you much here — a
+Meross device accepts the connection and then silently ignores anything that is not signed,
+so a healthy device looks exactly like a dead one.
 
 Anything other than a connection error means the device is reachable. If it is not, the fix
 is on the network side. Reading states and most commands keep working through the cloud;
