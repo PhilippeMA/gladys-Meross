@@ -10,10 +10,7 @@
   "docker_image": "ghcr.io/philippema/gladys-meross:1.0.1",
   "gladys_version": ">=4.85.0",
   "cover_image": "https://raw.githubusercontent.com/PhilippeMA/gladys-Meross/main/cover.png",
-  "transports": [
-    "local",
-    "cloud"
-  ],
+  "transports": ["local", "cloud"],
   "config_schema": [
     {
       "key": "intro",
@@ -23,8 +20,8 @@
         "fr": "Connectez votre compte Meross"
       },
       "description": {
-        "en": "Sign in with the same email and password you use in the Meross mobile app. Your devices are then discovered automatically, with no pairing to redo. Meross allows a limited number of simultaneous sessions: if the app logs you out, sign in again there, both can coexist.",
-        "fr": "Utilisez les mêmes identifiants que dans l'application mobile Meross. Vos appareils sont ensuite découverts automatiquement, sans réappairage. Meross limite le nombre de sessions simultanées : si l'application vous déconnecte, reconnectez-vous, les deux peuvent coexister."
+        "en": "Sign in with the same email and password you use in the Meross mobile app. Your devices are then discovered automatically, with no pairing to redo. Meross allows a limited number of[...]",
+        "fr": "Utilisez les mêmes identifiants que dans l'application mobile Meross. Vos appareils sont ensuite découverts automatiquement, sans réappairage. Meross limite le nombre de sessions[...]"
       },
       "links": [
         {
@@ -119,7 +116,7 @@
       },
       "description": {
         "en": "How often metering plugs and hub sensors are read. On/off states arrive in real time and are never polled, so the slowest setting suits most homes.",
-        "fr": "Fréquence de lecture des prises avec mesure et des capteurs de hub. Les états on/off arrivent en temps réel : l'intervalle le plus lent convient à la plupart des installations."
+        "fr": "Fréquence de lecture des prises avec mesure et des capteurs de hub. Les états on/off arrivent en temps réel : l'intervalle le plus lent convient à la plupart des installations.[...]"
       },
       "required": false,
       "default": "60000",
