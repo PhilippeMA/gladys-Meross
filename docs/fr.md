@@ -12,7 +12,7 @@ matériel supplémentaire.
 | Votre appareil                                  | Ce que vous pouvez faire dans Gladys                              |
 | ----------------------------------------------- | ----------------------------------------------------------------- |
 | Prise ou interrupteur (MSS110, MSS210, MSS510…) | L'allumer et l'éteindre                                           |
-| Prise avec mesure (MSS310)                      | Marche/arrêt, plus puissance, tension, courant et énergie du jour |
+| Prise avec mesure (MSS310, MOP320)              | Marche/arrêt, plus puissance, tension, courant et énergie du jour |
 | Multiprise (MSS425…)                            | Chaque prise séparément                                           |
 | Ampoule ou bandeau (MSL120, MSL320, MSL430…)    | Marche/arrêt, luminosité, couleur et température de blanc         |
 | Ouvre-porte de garage (MSG100, MSG200)          | L'ouvrir, la fermer, et voir si elle est réellement ouverte       |

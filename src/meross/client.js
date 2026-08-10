@@ -29,6 +29,7 @@ import {
   METHOD,
   NAMESPACE,
   namespacePayloadKeys,
+  pickElectricityReading,
   SUB_DEVICE_ID_KEY,
 } from './protocol.js';
 
@@ -59,6 +60,12 @@ export const SESSION_KEYS = {
  * written.
  */
 export const PROBE_NAMESPACES = [
+  // The newer metering pair. Support for these is written from meross_lan's
+  // definitions rather than from a capture, and neither project has confirmed
+  // the request shape an MOP320 wants — so reading them here is how the shapes
+  // and units get checked against real hardware.
+  'Appliance.Control.ElectricityX',
+  'Appliance.Control.ConsumptionH',
   'Appliance.Control.Water',
   'Appliance.Control.WaterEvent',
   'Appliance.Digest.WaterPlan',
@@ -72,6 +79,12 @@ export const PROBE_NAMESPACES = [
  * timeout per shape tried, and there are several shapes.
  */
 const PROBE_TIMEOUT_MS = 6000;
+
+/**
+ * `channel` value meaning "all of them" on `Appliance.Control.ElectricityX`.
+ * (From `krahabb/meross_lan`.)
+ */
+const ELECTRICITY_ALL_CHANNELS = 65535;
 
 /**
  * Ports worth trying for the local endpoint. 80 is the documented one; 5010 is
@@ -769,18 +782,105 @@ export class MerossClient {
     return results;
   }
 
-  /** Read the instantaneous electricity measurement of a channel. */
+  /**
+   * Read the instantaneous electricity measurement of a channel.
+   *
+   * Returns `{ namespace, reading }` because the caller cannot scale the values
+   * without knowing which generation answered: the two disagree on volts by a
+   * factor of a hundred.
+   */
   async fetchElectricity(uuid, channel = 0) {
+    const device = this.devices.get(uuid);
+
+    if (device && NAMESPACE.CONTROL_ELECTRICITYX in (device.ability ?? {})) {
+      const reading = await this.#fetchElectricityX(device, channel);
+      return reading ? { namespace: NAMESPACE.CONTROL_ELECTRICITYX, reading } : null;
+    }
+
     const payload = await this.request(uuid, NAMESPACE.CONTROL_ELECTRICITY, METHOD.GET, {
       electricity: { channel },
     });
-    return payload?.electricity ?? null;
+    const reading = pickElectricityReading(payload, channel);
+    return reading ? { namespace: NAMESPACE.CONTROL_ELECTRICITY, reading } : null;
+  }
+
+  /**
+   * `Appliance.Control.ElectricityX`, whose request shape is not settled.
+   *
+   * meross_lan asks with `{"electricity":{"channel":65535}}` — 65535 meaning
+   * "every channel" — while noting an EM06 answers a plain `{}` and that the
+   * MOP320 may want a channel-indexed request. Nobody has confirmed which.
+   *
+   * So the shapes are tried in order and the one that answers is remembered on
+   * the device: the cost is paid once, and the poll that follows is a single
+   * round trip. Guessing one and calling it the truth is what turns a missing
+   * feature into a week of confusion.
+   */
+  async #fetchElectricityX(device, channel) {
+    const shapes = device.electricityXShape
+      ? [device.electricityXShape]
+      : [
+          { electricity: { channel: ELECTRICITY_ALL_CHANNELS } },
+          {},
+          { electricity: [{ channel }] },
+        ];
+
+    let lastError = null;
+
+    for (const shape of shapes) {
+      try {
+        const payload = await this.request(
+          device.uuid,
+          NAMESPACE.CONTROL_ELECTRICITYX,
+          METHOD.GET,
+          shape,
+        );
+        const reading = pickElectricityReading(payload, channel);
+        if (reading) {
+          if (!device.electricityXShape) {
+            logger.info(
+              `${device.name} answers ${NAMESPACE.CONTROL_ELECTRICITYX} to ` +
+                `${JSON.stringify(shape)}`,
+            );
+            device.electricityXShape = shape;
+          }
+          return reading;
+        }
+      } catch (err) {
+        lastError = err;
+      }
+    }
+
+    // A shape that stops working — a firmware update, say — must not be kept.
+    device.electricityXShape = undefined;
+    if (lastError) {
+      throw lastError;
+    }
+    return null;
   }
 
   /** Read the per-day energy history (most recent day last). */
   async fetchConsumption(uuid) {
     const payload = await this.request(uuid, NAMESPACE.CONTROL_CONSUMPTIONX, METHOD.GET, {});
     return payload?.consumptionx ?? [];
+  }
+
+  /**
+   * Read the hourly energy history of a channel.
+   *
+   * The newer counterpart of `ConsumptionX`: instead of one entry per day it
+   * carries `{ total, data: [{ timestamp, value }] }` — buckets over roughly the
+   * last day. Request shape confirmed from a meross_lan capture.
+   */
+  async fetchConsumptionH(uuid, channel = 0) {
+    const payload = await this.request(uuid, NAMESPACE.CONTROL_CONSUMPTIONH, METHOD.GET, {
+      consumptionH: [{ channel }],
+    });
+    const entries = payload?.consumptionH;
+    if (!Array.isArray(entries)) {
+      return null;
+    }
+    return entries.find((entry) => Number(entry?.channel ?? 0) === channel) ?? entries[0] ?? null;
   }
 
   // --- Real-time -------------------------------------------------------------

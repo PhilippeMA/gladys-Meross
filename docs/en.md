@@ -11,7 +11,7 @@ the **Discovery** tab, ready to be added. No re-pairing, no extra hardware.
 | Your device                                         | What you can do in Gladys                               |
 | --------------------------------------------------- | ------------------------------------------------------- |
 | Smart plug or wall switch (MSS110, MSS210, MSS510…) | Turn it on and off                                      |
-| Plug with metering (MSS310)                         | On/off, plus power, voltage, current and today's energy |
+| Plug with metering (MSS310, MOP320)                 | On/off, plus power, voltage, current and today's energy |
 | Power strip (MSS425…)                               | Each outlet on and off separately                       |
 | Bulb or light strip (MSL120, MSL320, MSL430…)       | On/off, brightness, colour and white temperature        |
 | Garage door opener (MSG100, MSG200)                 | Open and close it, and see whether it is really open    |
