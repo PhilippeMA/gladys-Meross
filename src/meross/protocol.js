@@ -54,9 +54,12 @@ export const NAMESPACE = {
   CONTROL_TOGGLEX: 'Appliance.Control.ToggleX',
   CONTROL_LIGHT: 'Appliance.Control.Light',
   GARAGE_DOOR_STATE: 'Appliance.GarageDoor.State',
-  // Measurements
+  // Measurements. Two generations, and they are NOT interchangeable — see
+  // ELECTRICITY_SCALES: the newer one reports volts on a different scale.
   CONTROL_ELECTRICITY: 'Appliance.Control.Electricity',
+  CONTROL_ELECTRICITYX: 'Appliance.Control.ElectricityX',
   CONTROL_CONSUMPTIONX: 'Appliance.Control.ConsumptionX',
+  CONTROL_CONSUMPTIONH: 'Appliance.Control.ConsumptionH',
 
   // Hubs (MSH300, MSH400...). A hub is a gateway: it owns no feature of its
   // own, it relays the state of the battery sensors and valves paired to it.
@@ -435,21 +438,56 @@ export function rgbToInt({ r, g, b }) {
 }
 
 // --- Electricity -------------------------------------------------------------
-// `Appliance.Control.Electricity` reports integers in sub-units: milliwatts,
-// decivolts and milliamps. Converting here keeps the device layer readable and
-// gives the tests one obvious place to pin the scaling down.
+// Meross ships two generations of the metering namespace and they do NOT agree
+// on units. Both report integers in sub-units, but the voltage scale differs by
+// a factor of a hundred — read an ElectricityX payload with the older scale and
+// a 230 V mains reads as 22 800 V.
+//
+//   Appliance.Control.Electricity   `{ electricity: { ... } }`     an OBJECT
+//     power mW, voltage dV, current mA
+//   Appliance.Control.ElectricityX  `{ electricity: [ { ... } ] }` a LIST
+//     power mW, voltage mV, current mA, plus `mConsume` (Wh) and `factor`
+//
+// (Scales cross-checked against `krahabb/meross_lan`, which overrides only the
+// voltage divider between the two.)
+
+/** Sub-unit divisors per metering namespace. */
+export const ELECTRICITY_SCALES = {
+  [NAMESPACE.CONTROL_ELECTRICITY]: { power: 1000, voltage: 10, current: 1000 },
+  [NAMESPACE.CONTROL_ELECTRICITYX]: { power: 1000, voltage: 1000, current: 1000 },
+};
 
 /**
- * Normalize an `electricity` payload into SI units.
+ * Normalize an electricity reading into SI units.
+ *
  * @param {{ power?: number, voltage?: number, current?: number }} electricity
+ * @param {string} [namespace] which generation the reading came from
  * @returns {{ power: number, voltage: number, current: number }} W, V, A
  */
-export function normalizeElectricity(electricity = {}) {
+export function normalizeElectricity(electricity = {}, namespace = NAMESPACE.CONTROL_ELECTRICITY) {
+  const scale = ELECTRICITY_SCALES[namespace] ?? ELECTRICITY_SCALES[NAMESPACE.CONTROL_ELECTRICITY];
   return {
-    power: round(Number(electricity.power ?? 0) / 1000, 2), // mW -> W
-    voltage: round(Number(electricity.voltage ?? 0) / 10, 1), // dV -> V
-    current: round(Number(electricity.current ?? 0) / 1000, 3), // mA -> A
+    power: round(Number(electricity.power ?? 0) / scale.power, 2),
+    voltage: round(Number(electricity.voltage ?? 0) / scale.voltage, 1),
+    current: round(Number(electricity.current ?? 0) / scale.current, 3),
   };
+}
+
+/**
+ * Pick one channel's reading out of either generation's payload.
+ *
+ * `Electricity` answers with a single object — the device has one meter.
+ * `ElectricityX` answers with a list, one entry per channel, because it also
+ * ships on multi-channel meters.
+ */
+export function pickElectricityReading(payload, channel = 0) {
+  const electricity = payload?.electricity;
+  if (Array.isArray(electricity)) {
+    return (
+      electricity.find((entry) => Number(entry?.channel ?? 0) === channel) ?? electricity[0] ?? null
+    );
+  }
+  return electricity && typeof electricity === 'object' ? electricity : null;
 }
 
 function round(value, decimals) {

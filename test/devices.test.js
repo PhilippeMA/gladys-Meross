@@ -13,6 +13,7 @@ import {
   createFakeClient,
   garageOpener,
   legacyTogglePlug,
+  newGenerationPowerPlug,
   powerPlug,
   powerStrip,
   simplePlug,
@@ -33,7 +34,7 @@ import * as plug from '../src/devices/plug.js';
 import * as light from '../src/devices/light.js';
 import * as garageDoor from '../src/devices/garageDoor.js';
 import * as hub from '../src/devices/hub.js';
-import { NAMESPACE } from '../src/meross/protocol.js';
+import { NAMESPACE, normalizeElectricity } from '../src/meross/protocol.js';
 import { DEFAULT_CONFIG, POLL_FREQUENCIES } from '../src/config.js';
 
 const config = { ...DEFAULT_CONFIG };
@@ -741,5 +742,111 @@ test('polling a plug without measurements asks for none', async () => {
   assert.deepEqual(
     client.requests.map((r) => r.namespace),
     [NAMESPACE.SYSTEM_ALL],
+  );
+});
+
+// --- The newer metering generation (MOP320) ----------------------------------
+
+test('a plug advertising the newer metering namespaces gets its sensors', () => {
+  // Reported from the field: an MOP320 could be switched on and off but had no
+  // power, voltage, current or energy. It advertises ElectricityX and
+  // ConsumptionH; detection only matched Electricity and ConsumptionX, so every
+  // measurement feature was skipped without a word.
+  const gladys = createFakeGladys();
+  const [device] = buildDiscoveredDevices(gladys, [newGenerationPowerPlug()], config);
+
+  assert.deepEqual(
+    device.features.map((f) => f.name),
+    ['On/Off', 'Power', 'Voltage', 'Current', 'Energy today'],
+  );
+  assert.equal(feature(device, 'power-0').unit, 'watt');
+  assert.equal(feature(device, 'voltage-0').unit, 'volt');
+  assert.equal(feature(device, 'current-0').unit, 'ampere');
+  assert.equal(feature(device, 'energy-today-0').unit, 'kilowatt-hour');
+});
+
+test('a plug with no metering namespace at all stays a bare switch', () => {
+  // The MSS620 in the same report: on/off only, and correctly so.
+  const gladys = createFakeGladys();
+  const plain = newGenerationPowerPlug({
+    type: 'mss620',
+    ability: {
+      [NAMESPACE.SYSTEM_ALL]: {},
+      [NAMESPACE.CONTROL_TOGGLEX]: {},
+    },
+  });
+
+  const [device] = buildDiscoveredDevices(gladys, [plain], config);
+  assert.deepEqual(
+    device.features.map((f) => f.name),
+    ['On/Off'],
+  );
+});
+
+test('the two metering generations are scaled differently', () => {
+  // The trap: both report integers in sub-units, but the VOLTAGE scale differs
+  // by a factor of a hundred. Reading an ElectricityX payload with the older
+  // divider turns 234.5 V mains into 23450 V.
+  const older = { power: 123456, voltage: 2345, current: 543 };
+  const newer = { power: 123456, voltage: 234500, current: 543 };
+
+  assert.deepEqual(normalizeElectricity(older, NAMESPACE.CONTROL_ELECTRICITY), {
+    power: 123.46,
+    voltage: 234.5,
+    current: 0.543,
+  });
+  assert.deepEqual(normalizeElectricity(newer, NAMESPACE.CONTROL_ELECTRICITYX), {
+    power: 123.46,
+    voltage: 234.5,
+    current: 0.543,
+  });
+
+  // And the older scale applied to the newer payload is the bug, spelled out.
+  assert.equal(normalizeElectricity(newer, NAMESPACE.CONTROL_ELECTRICITY).voltage, 23450);
+});
+
+test('polling an MOP320 publishes the measurements at the right scale', async () => {
+  const gladys = createFakeGladys();
+  const device = newGenerationPowerPlug();
+  const client = createFakeClient([device]);
+
+  await handlePoll(gladys, client, { external_id: `meross:${device.uuid}` }, config);
+
+  const states = Object.fromEntries(gladys.published.map((p) => [p.featureExternalId, p.state]));
+  assert.equal(states[`meross:${device.uuid}:power-0`], 123.46);
+  assert.equal(states[`meross:${device.uuid}:voltage-0`], 234.5, 'millivolts, not decivolts');
+  assert.equal(states[`meross:${device.uuid}:current-0`], 0.543);
+  // 1000 Wh + 234 Wh from today's buckets; yesterday's 999 is excluded.
+  assert.equal(states[`meross:${device.uuid}:energy-today-0`], 1.234);
+});
+
+test('hourly energy counts today only, and never guesses', () => {
+  const now = new Date('2024-06-15T10:00:00');
+  const midnight = Math.floor(new Date('2024-06-15T00:00:00').getTime() / 1000);
+
+  assert.equal(
+    plug.readTodayConsumptionH(
+      {
+        total: 9999,
+        data: [
+          { timestamp: midnight - 3600, value: 500 }, // yesterday
+          { timestamp: midnight + 3600, value: 1200 },
+          { timestamp: midnight + 7200, value: 300 },
+        ],
+      },
+      now,
+    ),
+    1.5,
+  );
+
+  // `total` is never used as a fallback: nothing confirms what window it covers,
+  // and a wrong energy figure is worse than none.
+  assert.equal(plug.readTodayConsumptionH({ total: 9999, data: [] }, now), null);
+  assert.equal(plug.readTodayConsumptionH({ total: 9999 }, now), null);
+  assert.equal(plug.readTodayConsumptionH(null, now), null);
+  // Nothing from today, only older buckets.
+  assert.equal(
+    plug.readTodayConsumptionH({ data: [{ timestamp: midnight - 7200, value: 800 }] }, now),
+    null,
   );
 });

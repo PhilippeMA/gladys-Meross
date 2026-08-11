@@ -10,6 +10,38 @@
 import { NAMESPACE } from '../../src/meross/protocol.js';
 
 /** MSS310: single smart plug with power monitoring. */
+/**
+ * An MOP320: the newer metering generation. It advertises ElectricityX and
+ * ConsumptionH where an MSS310 advertises Electricity and ConsumptionX — which
+ * is why matching only the older pair left it a bare on/off switch.
+ * (Abilities copied from a real device's diagnostic.)
+ */
+export function newGenerationPowerPlug(overrides = {}) {
+  return {
+    uuid: '4411223344556677889900aabbccddee',
+    name: 'Prise x',
+    type: 'mop320',
+    channelCount: 1,
+    channelNames: [''],
+    online: true,
+    ip: '192.168.68.57',
+    firmwareVersion: '4.1.0',
+    ability: {
+      [NAMESPACE.SYSTEM_ALL]: {},
+      [NAMESPACE.SYSTEM_ABILITY]: {},
+      [NAMESPACE.CONTROL_TOGGLEX]: {},
+      [NAMESPACE.CONTROL_ELECTRICITYX]: {},
+      [NAMESPACE.CONTROL_CONSUMPTIONH]: {},
+      'Appliance.Config.ElectricParam': {},
+      'Appliance.Control.OverTemp': {},
+    },
+    digest: {
+      togglex: [{ channel: 0, onoff: 1, lmTime: 1700000000 }],
+    },
+    ...overrides,
+  };
+}
+
 export function powerPlug(overrides = {}) {
   return {
     uuid: '1806239851916890865148e1e9aa11f1',
@@ -301,9 +333,43 @@ export function createFakeClient(devices = []) {
     },
 
     async fetchElectricity(uuid, channel = 0) {
+      const device = byUuid.get(uuid);
+      // Mirrors the real client: which generation answered decides the scaling,
+      // so it comes back with the reading.
+      if (NAMESPACE.CONTROL_ELECTRICITYX in (device?.ability ?? {})) {
+        requests.push({
+          uuid,
+          namespace: NAMESPACE.CONTROL_ELECTRICITYX,
+          method: 'GET',
+          channel,
+        });
+        // 123.456 W, 234.5 V, 0.543 A — voltage in MILLIvolts here.
+        return {
+          namespace: NAMESPACE.CONTROL_ELECTRICITYX,
+          reading: { channel, power: 123456, voltage: 234500, current: 543 },
+        };
+      }
+
       requests.push({ uuid, namespace: NAMESPACE.CONTROL_ELECTRICITY, method: 'GET', channel });
-      // 123.456 W, 234.5 V, 0.543 A in Meross sub-units.
-      return { channel, power: 123456, voltage: 2345, current: 543 };
+      // The same values, with voltage in DECIvolts.
+      return {
+        namespace: NAMESPACE.CONTROL_ELECTRICITY,
+        reading: { channel, power: 123456, voltage: 2345, current: 543 },
+      };
+    },
+
+    async fetchConsumptionH(uuid, channel = 0) {
+      requests.push({ uuid, namespace: NAMESPACE.CONTROL_CONSUMPTIONH, method: 'GET', channel });
+      const now = Math.floor(Date.now() / 1000);
+      return {
+        channel,
+        total: 4321,
+        data: [
+          { timestamp: now - 90000, value: 999 }, // yesterday: must not count
+          { timestamp: now - 3600, value: 1000 },
+          { timestamp: now, value: 234 },
+        ],
+      };
     },
 
     async fetchConsumption(uuid) {

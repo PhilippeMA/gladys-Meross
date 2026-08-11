@@ -5,10 +5,16 @@
 // multi-outlet power strips (one on/off feature per outlet, all under a single
 // Gladys device).
 //
-// The power-monitoring references (MSS310 and friends) advertise
-// `Appliance.Control.Electricity` and/or `Appliance.Control.ConsumptionX`; the
-// matching sensor features are added only when the firmware really reports
-// them, so a plain MSS110 stays a plain on/off device.
+// The power-monitoring references advertise a metering namespace, and there are
+// TWO generations of each — a device carries one or the other, never both:
+//
+//   live values   Appliance.Control.Electricity   |  Appliance.Control.ElectricityX
+//   energy        Appliance.Control.ConsumptionX  |  Appliance.Control.ConsumptionH
+//
+// Matching only the older pair is why an MOP320 came up as a bare on/off switch:
+// it advertises ElectricityX and ConsumptionH, so every metering feature was
+// silently skipped. Detection is by capability, so a plain MSS110 still stays a
+// plain on/off device.
 // -----------------------------------------------------------------------------
 
 import {
@@ -17,7 +23,10 @@ import {
   DEVICE_FEATURE_UNITS,
 } from '@gladysassistant/integration-sdk';
 import { METHOD, NAMESPACE, normalizeElectricity } from '../meross/protocol.js';
+import { createLogger } from '@gladysassistant/integration-sdk';
 import { buildFeatureKey, FEATURE_KIND } from './featureIds.js';
+
+const logger = createLogger({ name: 'plug' });
 
 export const KIND = 'plug';
 
@@ -28,14 +37,20 @@ export function matches(device) {
   return hasToggle && !(NAMESPACE.CONTROL_LIGHT in device.ability);
 }
 
-/** True when the device reports live electricity measurements. */
+/** True when the device reports live electricity measurements, either generation. */
 export function hasElectricity(device) {
-  return NAMESPACE.CONTROL_ELECTRICITY in device.ability;
+  return (
+    NAMESPACE.CONTROL_ELECTRICITY in device.ability ||
+    NAMESPACE.CONTROL_ELECTRICITYX in device.ability
+  );
 }
 
-/** True when the device keeps a per-day energy history. */
+/** True when the device keeps an energy history, either generation. */
 export function hasConsumption(device) {
-  return NAMESPACE.CONTROL_CONSUMPTIONX in device.ability;
+  return (
+    NAMESPACE.CONTROL_CONSUMPTIONX in device.ability ||
+    NAMESPACE.CONTROL_CONSUMPTIONH in device.ability
+  );
 }
 
 /**
@@ -192,9 +207,14 @@ export async function poll(client, device) {
   const states = [];
 
   if (hasElectricity(device)) {
-    const electricity = await client.fetchElectricity(device.uuid, 0);
-    if (electricity) {
-      const { power, voltage, current } = normalizeElectricity(electricity);
+    // The client says which generation answered, because the caller cannot
+    // scale the numbers without it: the two disagree on volts by 100x.
+    const measured = await client.fetchElectricity(device.uuid, 0);
+    if (measured) {
+      const { power, voltage, current } = normalizeElectricity(
+        measured.reading,
+        measured.namespace,
+      );
       states.push(
         { featureKey: buildFeatureKey(FEATURE_KIND.POWER, 0), state: power },
         { featureKey: buildFeatureKey(FEATURE_KIND.VOLTAGE, 0), state: voltage },
@@ -203,14 +223,30 @@ export async function poll(client, device) {
     }
   }
 
-  if (hasConsumption(device)) {
-    const today = readTodayConsumption(await client.fetchConsumption(device.uuid));
-    if (today !== null) {
-      states.push({ featureKey: buildFeatureKey(FEATURE_KIND.ENERGY_TODAY, 0), state: today });
-    }
+  const today = await readEnergyToday(client, device);
+  if (today !== null) {
+    states.push({ featureKey: buildFeatureKey(FEATURE_KIND.ENERGY_TODAY, 0), state: today });
   }
 
   return states;
+}
+
+/** Today's energy in kWh, from whichever history namespace the device has. */
+async function readEnergyToday(client, device) {
+  if (NAMESPACE.CONTROL_CONSUMPTIONX in device.ability) {
+    return readTodayConsumption(await client.fetchConsumption(device.uuid));
+  }
+
+  if (NAMESPACE.CONTROL_CONSUMPTIONH in device.ability) {
+    const entry = await client.fetchConsumptionH(device.uuid, 0);
+    const today = readTodayConsumptionH(entry);
+    if (today === null && entry) {
+      logger.debug(`${device.name} reported no hourly energy for today: ${JSON.stringify(entry)}`);
+    }
+    return today;
+  }
+
+  return null;
 }
 
 /**
@@ -232,6 +268,40 @@ export function readTodayConsumption(history, now = new Date()) {
     return null;
   }
   return Math.round(wattHours) / 1000;
+}
+
+/**
+ * Add up today's hourly buckets from a `consumptionH` entry.
+ *
+ * `{ channel, total, data: [{ timestamp, value }] }` — `value` is watt-hours
+ * per hour-long bucket, `timestamp` a Unix epoch, and the window covers roughly
+ * the last day. Summing the buckets that fall on the current local day is what
+ * makes this comparable to the per-day figure the older namespace gives.
+ *
+ * `total` is deliberately ignored: nothing confirms whether it counts the
+ * window, the day or the month, and a wrong energy figure is worse than none.
+ */
+export function readTodayConsumptionH(entry, now = new Date()) {
+  const data = entry?.data;
+  if (!Array.isArray(data) || data.length === 0) {
+    return null;
+  }
+
+  const start = new Date(now.getFullYear(), now.getMonth(), now.getDate()).getTime() / 1000;
+  let wattHours = 0;
+  let counted = 0;
+
+  for (const bucket of data) {
+    const timestamp = Number(bucket?.timestamp);
+    const value = Number(bucket?.value);
+    if (!Number.isFinite(timestamp) || !Number.isFinite(value) || timestamp < start) {
+      continue;
+    }
+    wattHours += value;
+    counted += 1;
+  }
+
+  return counted === 0 ? null : Math.round(wattHours) / 1000;
 }
 
 function pad(value) {
