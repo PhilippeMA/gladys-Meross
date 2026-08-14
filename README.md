@@ -18,11 +18,44 @@ that toggles a relay is understood on day one.
 | Type                     | Typical models         | Features in Gladys                                              |
 | ------------------------ | ---------------------- | --------------------------------------------------------------- |
 | Smart plug / wall switch | MSS110, MSS210, MSS510 | On/off                                                          |
-| Smart plug with metering | MSS310                 | On/off, power (W), voltage (V), current (A), energy today (kWh) |
+| Smart plug with metering | MSS310, MOP320         | On/off, power (W), voltage (V), current (A), energy today (kWh) |
 | Power strip              | MSS425, MSS425E        | One on/off feature per outlet, plus a master                    |
 | Bulb / light strip       | MSL120, MSL320, MSL430 | On/off, brightness, colour, white temperature                   |
 | Garage door opener       | MSG100, MSG200         | Open/close, with the real door position fed back                |
 | Hub                      | MSH300, MSH400         | Its sub-devices, published individually (see below)             |
+
+#### Two generations of metering, and they disagree on volts
+
+A metering plug advertises one of two pairs, never both:
+
+|             | older                            | newer                            |
+| ----------- | -------------------------------- | -------------------------------- |
+| live values | `Appliance.Control.Electricity`  | `Appliance.Control.ElectricityX` |
+| energy      | `Appliance.Control.ConsumptionX` | `Appliance.Control.ConsumptionH` |
+| models seen | MSS310                           | MOP320, EM06                     |
+
+Matching only the older pair is why an MOP320 arrived as a bare on/off switch: it advertises
+the newer one, so every measurement feature was skipped — silently, since a missing
+capability is not an error.
+
+The two are not interchangeable beyond their names:
+
+- `Electricity` answers with an **object**, `ElectricityX` with a **list**, one entry per
+  channel;
+- both report milliwatts and milliamps, but volts are **decivolts** in the older and
+  **millivolts** in the newer. Read the newer with the older divider and 234.5 V mains reads
+  as 23450 V. A test pins that mistake in place so it stays visible;
+- `ConsumptionX` gives one entry per day; `ConsumptionH` gives hourly buckets,
+  `{ total, data: [{ timestamp, value }] }`. Today's energy is the sum of the buckets falling
+  on the current local day. `total` is ignored: nothing confirms whether it covers the
+  window, the day or the month, and a wrong energy figure is worse than none.
+
+**The `ElectricityX` request shape is not settled**, including in meross_lan, which asks with
+`{"electricity":{"channel":65535}}` while noting an EM06 answers a plain `{}` and that an
+MOP320 may want a channel-indexed request. So the shapes are tried in order and the one that
+answers is remembered on the device: paid once, then a single round trip per poll. Both
+namespaces are also in the diagnostic probe, which is how the shapes and units get confirmed
+against hardware rather than assumed.
 
 ### Hubs and their sub-devices
 
