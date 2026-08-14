@@ -8,8 +8,15 @@
 #   2. writes it into `package.json`, `package-lock.json` AND the manifest
 #      (`gladys-assistant-integration.json`: both `version` and the
 #      `docker_image` tag, so the indexer and the image stay in lockstep);
-#   3. commits the bump and pushes the `vX.Y.Z` tag;
-#   4. calls build.yml to publish the multi-arch image (`:X.Y.Z` + `:latest`).
+#   3. re-runs Prettier over what it just rewrote — see below;
+#   4. commits the bump and pushes the `vX.Y.Z` tag;
+#   5. calls build.yml to publish the multi-arch image (`:X.Y.Z` + `:latest`).
+#
+# Step 3 is not cosmetic. `jq` rewrites the whole manifest in ITS format, which
+# is not Prettier's, so the release commit lands on `main` already failing the
+# CI's `prettier --check` — a red build on a branch nobody touched, caused by
+# the release itself. A job that writes files has to leave them the way the
+# checks expect to find them.
 #
 # Why call build.yml instead of relying on the tag push: a tag pushed with the
 # default GITHUB_TOKEN does NOT trigger other workflows, so we invoke the build
@@ -47,6 +54,13 @@ jobs:
         uses: actions/setup-node@v4
         with:
           node-version: 24
+          cache: npm
+
+      # Needed for the Prettier below: running the version pinned in the
+      # lockfile is what makes this agree with the CI's check rather than
+      # merely resemble it.
+      - name: Install dependencies
+        run: npm ci
 
       - name: Bump version and update the manifest
         id: bump
@@ -70,6 +84,11 @@ jobs:
             '.version = $version | .docker_image = $image' \
             gladys-assistant-integration.json > "$tmp"
           mv "$tmp" gladys-assistant-integration.json
+
+          # `npm version` and `jq` both write in their own format. Hand the
+          # files back in the repository's, so the release commit passes the
+          # same check every other commit does.
+          npx prettier --write package.json gladys-assistant-integration.json
 
           echo "version=${new_version}" >> "$GITHUB_OUTPUT"
 

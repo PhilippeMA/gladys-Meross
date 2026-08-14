@@ -158,3 +158,37 @@ test('declaring both transports is what enables the prefer-local toggle', () => 
   assert.deepEqual([...manifest.transports].sort(), ['cloud', 'local']);
   assert.equal(DEFAULT_CONFIG.GLADYS_PREFER_LOCAL, true);
 });
+
+test('the declared categories are valid, and force the Gladys version that added them', () => {
+  // `categories` is what puts the integration in the right shelves of the store
+  // catalogue. Gladys 4.86 introduced the field, so declaring it without
+  // raising `gladys_version` would offer the integration to versions that
+  // cannot read it.
+  const ALLOWED = [
+    'climate',
+    'lighting',
+    'energy',
+    'security',
+    'multimedia',
+    'appliances',
+    'environment',
+    'protocols',
+    'network',
+    'notifications',
+    'assistants',
+    'services',
+  ];
+
+  assert.ok(Array.isArray(manifest.categories), 'categories is a list');
+  assert.ok(
+    manifest.categories.length >= 1 && manifest.categories.length <= 3,
+    `expected 1 to 3 categories, got ${manifest.categories.length}`,
+  );
+  assert.equal(new Set(manifest.categories).size, manifest.categories.length, 'no duplicates');
+
+  for (const category of manifest.categories) {
+    assert.ok(ALLOWED.includes(category), `"${category}" is not a store category`);
+  }
+
+  assert.equal(manifest.gladys_version, '>=4.86.0');
+});
