@@ -11,6 +11,7 @@ import assert from 'node:assert/strict';
 import {
   buildSignedBody,
   checkApiStatus,
+  LOGIN_WONT_HELP_STATUSES,
   MerossApiError,
   REGION_ENDPOINTS,
 } from '../src/meross/cloudApi.js';
@@ -64,10 +65,23 @@ test('an unknown apiStatus still surfaces the API message', () => {
   );
 });
 
-test('expired-token statuses are flagged so the client can log in again', () => {
-  assert.equal(new MerossApiError(1019).isTokenExpired, true);
-  assert.equal(new MerossApiError(1200).isTokenExpired, true);
-  assert.equal(new MerossApiError(1004).isTokenExpired, false);
+test('a rejected session asks for a fresh login by default', () => {
+  // The one that broke a working install: 1022 was not on the old allow-list,
+  // so the integration threw instead of logging in again — and never recovered.
+  assert.equal(new MerossApiError(1022).needsFreshLogin, true);
+  assert.equal(new MerossApiError(1019).needsFreshLogin, true);
+  assert.equal(new MerossApiError(1200).needsFreshLogin, true);
+  // An undocumented code must fall on the recoverable side too.
+  assert.equal(new MerossApiError(9999).needsFreshLogin, true);
+});
+
+test('statuses a new login cannot fix do not trigger one', () => {
+  for (const status of LOGIN_WONT_HELP_STATUSES) {
+    assert.equal(new MerossApiError(status).needsFreshLogin, false, `status ${status}`);
+  }
+  // Credentials, and the session cap a second login would only make worse.
+  assert.ok(LOGIN_WONT_HELP_STATUSES.has(1004));
+  assert.ok(LOGIN_WONT_HELP_STATUSES.has(1301));
 });
 
 test('a missing apiStatus is treated as a failure, not a success', () => {
