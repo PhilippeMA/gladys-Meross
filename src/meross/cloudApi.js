@@ -55,12 +55,31 @@ const API_STATUS_MESSAGES = {
   1006: 'Wrong password format.',
   1008: 'This email is not registered on Meross.',
   1019: 'Meross session expired, a new login is required.',
+  1022: 'Meross no longer recognises this session, a new login is required.',
   1200: 'Meross token invalid or expired, a new login is required.',
   1301: 'Too many active Meross sessions: log out of some devices and retry.',
 };
 
-/** Statuses that mean "your stored token is dead, log in again". */
-export const TOKEN_EXPIRED_STATUSES = new Set([1019, 1200]);
+/**
+ * Statuses a fresh login cannot fix — or would make worse.
+ *
+ * The rule is deliberately inverted: ANY other API error on a cached token
+ * means log in again. Listing the codes that mean "dead token" instead was a
+ * mistake that took a working install down — a cached session started coming
+ * back as `1022 No login`, which was not on the list, so the integration threw
+ * instead of re-authenticating, and since nothing clears a dead token every
+ * later attempt repeated it. It never recovered on its own.
+ *
+ * Meross has more status codes than anyone has documented, and the cost of the
+ * two directions is not symmetric: re-logging in when it was not needed costs
+ * one request, while refusing to when it was costs the whole integration.
+ *
+ * What stays out:
+ *   - credential errors, where the same login fails the same way;
+ *   - 1301, the session cap: another login adds to the pile it is complaining
+ *     about.
+ */
+export const LOGIN_WONT_HELP_STATUSES = new Set([1001, 1002, 1004, 1005, 1006, 1008, 1301]);
 
 export class MerossApiError extends Error {
   constructor(apiStatus, info) {
@@ -72,8 +91,8 @@ export class MerossApiError extends Error {
   }
 
   /** True when re-authenticating from scratch is the right recovery. */
-  get isTokenExpired() {
-    return TOKEN_EXPIRED_STATUSES.has(this.apiStatus);
+  get needsFreshLogin() {
+    return !LOGIN_WONT_HELP_STATUSES.has(this.apiStatus);
   }
 }
 

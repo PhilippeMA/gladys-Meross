@@ -181,10 +181,17 @@ export class MerossClient {
         await cloudApi.listDevices({ baseUrl: this.baseUrl, token: cached.token });
         return this.session;
       } catch (err) {
-        if (!(err instanceof cloudApi.MerossApiError) || !err.isTokenExpired) {
+        // A network failure is not the token's fault, and burning a fresh
+        // Meross session over one would be worse than waiting.
+        if (!(err instanceof cloudApi.MerossApiError) || !err.needsFreshLogin) {
           throw err;
         }
-        logger.info('Cached Meross session expired, logging in again');
+        // Drop it before trying again: a token the API has rejected must never
+        // be reused, and leaving it cached is what turned one bad session into
+        // a permanent failure.
+        this.session = null;
+        await this.#forgetSession();
+        logger.info(`Cached Meross session rejected (${err.message}), logging in again`);
       }
     }
 
@@ -200,6 +207,24 @@ export class MerossClient {
 
     await this.#persistSession();
     return this.session;
+  }
+
+  /** Erase the cached session so a rejected token cannot be reused. */
+  async #forgetSession() {
+    if (typeof this.saveSession !== 'function') {
+      return;
+    }
+    try {
+      await this.saveSession({
+        [SESSION_KEYS.TOKEN]: '',
+        [SESSION_KEYS.KEY]: '',
+        [SESSION_KEYS.USER_ID]: '',
+        [SESSION_KEYS.MQTT_DOMAIN]: '',
+      });
+    } catch (err) {
+      // Not fatal: the login below replaces it anyway.
+      logger.warn('Could not clear the rejected Meross session', err);
+    }
   }
 
   async #persistSession() {

@@ -203,6 +203,112 @@ test('an incomplete cached session is ignored so we log in cleanly', () => {
   assert.equal(readCachedSession(), null);
 });
 
+/**
+ * Stub the Meross cloud at the `fetch` level: every call answers HTTP 200, and
+ * the real outcome sits in `apiStatus` — exactly like the API does.
+ *
+ * @param {Array<object>} bodies one response body per call, in order
+ * @returns {{ paths: string[], tokens: (string|undefined)[], restore: () => void }}
+ */
+function stubCloud(bodies) {
+  const original = globalThis.fetch;
+  const paths = [];
+  const tokens = [];
+  let call = 0;
+
+  globalThis.fetch = async (url, options) => {
+    paths.push(new URL(url).pathname);
+    tokens.push(options?.headers?.Authorization);
+    const body = bodies[call];
+    call += 1;
+    return { ok: true, json: async () => body };
+  };
+
+  return { paths, tokens, restore: () => (globalThis.fetch = original) };
+}
+
+const CACHED_CONFIG = {
+  email: 'user@example.com',
+  password: 'secret',
+  region: 'eu',
+  [SESSION_KEYS.TOKEN]: 'stale-token',
+  [SESSION_KEYS.KEY]: 'stale-key',
+  [SESSION_KEYS.USER_ID]: '42',
+  [SESSION_KEYS.MQTT_DOMAIN]: 'mqtt-eu-4.meross.com',
+};
+
+const LOGIN_OK = {
+  apiStatus: 0,
+  data: { token: 'fresh-token', key: 'fresh-key', userid: 42, mqttDomain: 'mqtt-eu-4.meross.com' },
+};
+
+test('a session Meross no longer recognises is dropped and replaced', async () => {
+  // The reported failure: the cached token came back as `1022 No login`. Since
+  // nothing cleared it, every later attempt reused the same dead token and the
+  // integration never came back on its own.
+  const cloud = stubCloud([{ apiStatus: 1022, info: 'No login' }, LOGIN_OK]);
+  const saved = [];
+  const client = new MerossClient({ saveSession: async (partial) => saved.push(partial) });
+
+  try {
+    const session = await client.authenticate({ ...CACHED_CONFIG });
+
+    assert.equal(session.token, 'fresh-token');
+    assert.deepEqual(cloud.paths, ['/v1/Device/devList', '/v1/Auth/signIn']);
+    // The dead token must not be carried into the login request.
+    assert.equal(cloud.tokens[1], undefined);
+    // Erased first, so a crash between the two never leaves it cached.
+    assert.equal(saved[0][SESSION_KEYS.TOKEN], '');
+    assert.equal(saved[1][SESSION_KEYS.TOKEN], 'fresh-token');
+  } finally {
+    cloud.restore();
+  }
+});
+
+test('an undocumented API status on a cached session also triggers a login', async () => {
+  const cloud = stubCloud([{ apiStatus: 9999, info: 'Whatever Meross invents next' }, LOGIN_OK]);
+  const client = new MerossClient({});
+
+  try {
+    const session = await client.authenticate({ ...CACHED_CONFIG });
+    assert.equal(session.token, 'fresh-token');
+  } finally {
+    cloud.restore();
+  }
+});
+
+test('the session cap is not answered with yet another login', async () => {
+  // 1301 says there are too many sessions already: logging in again would add
+  // to the very pile the API is complaining about.
+  const cloud = stubCloud([{ apiStatus: 1301, info: 'Too many tokens' }]);
+  const saved = [];
+  const client = new MerossClient({ saveSession: async (partial) => saved.push(partial) });
+
+  try {
+    await assert.rejects(() => client.authenticate({ ...CACHED_CONFIG }), /1301/);
+    assert.deepEqual(cloud.paths, ['/v1/Device/devList']);
+    assert.deepEqual(saved, []);
+  } finally {
+    cloud.restore();
+  }
+});
+
+test('a network failure keeps the cached session instead of burning a new one', async () => {
+  const original = globalThis.fetch;
+  globalThis.fetch = async () => {
+    throw new Error('network down');
+  };
+  const saved = [];
+  const client = new MerossClient({ saveSession: async (partial) => saved.push(partial) });
+
+  try {
+    await assert.rejects(() => client.authenticate({ ...CACHED_CONFIG }), /network down/);
+    assert.deepEqual(saved, []);
+  } finally {
+    globalThis.fetch = original;
+  }
+});
+
 // --- MQTT addressing ---------------------------------------------------------
 
 test('the device uuid is extracted from the reply topic', () => {
