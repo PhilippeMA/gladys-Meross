@@ -1,6 +1,6 @@
 {
   "name": "gladys-meross",
-  "version": "1.1.0",
+  "version": "1.1.1",
   "private": true,
   "description": "External integration to read and control Meross devices from Gladys Assistant.",
   "type": "module",
