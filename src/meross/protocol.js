@@ -106,7 +106,8 @@ export const WATER_ONOFF = {
 };
 
 /**
- * Read a watering timer's configured duration, in seconds.
+ * Read a watering timer's configured duration, in seconds — the default the
+ * Meross app edits.
  *
  * Two different `dura` fields exist and only one of them is the setting:
  *   - `Appliance.Config.DeviceCfg` -> `mstCfg.dura` is CONFIGURED, and is what
@@ -114,12 +115,24 @@ export const WATER_ONOFF = {
  *   - `Appliance.Control.Water` -> `dura` is the duration of the LAST CYCLE.
  * Reading the second as though it were the first makes Gladys report back
  * whatever it last sent, which looks like a value out of nowhere.
+ *
+ * There is deliberately NO fallback from one to the other. It used to be
+ * harmless, because every cycle ran for the configured duration and the two
+ * always agreed. Since a watering can now be started with a one-off duration,
+ * the last cycle is no longer evidence of anything about the default: falling
+ * back would present a one-off override as the user's app setting.
  */
 export function readConfiguredDuration(state = {}) {
   const configured = Number(state.config?.mstCfg?.dura);
-  if (Number.isFinite(configured) && configured > 0) {
-    return configured;
-  }
+  return Number.isFinite(configured) && configured > 0 ? configured : null;
+}
+
+/**
+ * Duration of the LAST cycle, in seconds, straight from
+ * `Appliance.Control.Water` — what the timer actually ran for, however the
+ * watering was started.
+ */
+export function readLastCycleDuration(state = {}) {
   const lastCycle = Number(state.control?.dura);
   return Number.isFinite(lastCycle) && lastCycle > 0 ? lastCycle : null;
 }
@@ -127,23 +140,35 @@ export function readConfiguredDuration(state = {}) {
 /**
  * Build the `Appliance.Control.Water` payload.
  *
- * No `dura`. The app's capture carries one, and sending it OVERRIDES the
- * duration configured on the timer for that cycle — which is how this
- * integration silently replaced a user's own setting with its own default.
- * Left out, the timer waters for the duration it was configured with, and the
- * Meross app and Gladys agree because there is only one value.
+ * `dura` is optional, and omitting it is the DEFAULT behaviour: the timer then
+ * waters for the duration it is configured with — the one the Meross app shows.
+ * Passing a duration overrides it for that cycle only, exactly as the Meross app
+ * does on "water now".
  *
- * `Appliance.Config.DeviceCfg` is where that configured value lives, and is
- * what to write when the user really does want a different duration.
+ * Omission, not echo. Reading the configured duration and sending it back would
+ * look equivalent and is not: it puts Gladys back in the position of asserting a
+ * number that may be stale, which is how this integration once presented its own
+ * default as the user's setting. Saying nothing lets the hardware answer, and
+ * works even when the timer's configuration has never been read.
+ *
+ * Writing the configured default is a different operation entirely, on
+ * `Appliance.Config.DeviceCfg` — see buildWateringDurationPayload.
  *
  * @param {object} options
  * @param {string} options.subId sub-device id of the timer
  * @param {number} [options.channel]
  * @param {boolean} options.start
+ * @param {number} [options.durationSeconds] one-off duration for THIS cycle;
+ *   falsy or non-positive means "let the timer use its own"
  */
-export function buildWaterControlPayload({ subId, channel = 0, start }) {
+export function buildWaterControlPayload({ subId, channel = 0, start, durationSeconds }) {
+  const seconds = Math.round(Number(durationSeconds));
+  // Only on a start: `dura` alongside a stop would be meaningless, and this
+  // firmware has never been generous with meaningless fields.
+  const override = start && Number.isFinite(seconds) && seconds > 0 ? { dura: seconds } : {};
+
   return {
-    control: [{ channel, onoff: start ? WATER_ONOFF.START : WATER_ONOFF.STOP, subId }],
+    control: [{ channel, ...override, onoff: start ? WATER_ONOFF.START : WATER_ONOFF.STOP, subId }],
   };
 }
 

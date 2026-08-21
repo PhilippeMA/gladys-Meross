@@ -105,7 +105,7 @@ The same shape reads back, so the namespace is polled as well as pushed:
 
 A timer therefore exposes a **Watering** switch that reflects what the hardware is really
 doing — a cycle started from the Meross app or by the timer's own schedule shows up in
-Gladys too — and a **Watering duration** in minutes.
+Gladys too — and three durations in minutes.
 
 ##### Two fields called `dura`, and only one is the setting
 
@@ -121,10 +121,38 @@ from `Control.Water`. The device dutifully reported the number Gladys had just w
 the reading looked like confirmation — while the duration its owner had set in the Meross app
 had been overwritten. A user asked where the 900 came from, and the answer was: from us.
 
-So the duration is read from `Config.DeviceCfg` and **written there** when the user changes
-it — the same field the app edits, one value, no copy of our own. A start carries no `dura`
-at all, which is also what `meross_lan` does. When the device has reported nothing, the
-feature stays unpublished rather than showing an invented number.
+So the configured duration is read from `Config.DeviceCfg` and **written there** when the
+user changes it — the same field the app edits, one value, no copy of our own. When the
+device has reported nothing, the feature stays unpublished rather than showing an invented
+number. There is deliberately **no fallback** from `Control.Water` to `Config.DeviceCfg`: it
+was harmless while every cycle ran for the configured duration, and stopped being harmless
+the moment a cycle could run for a one-off one.
+
+##### The one-off duration
+
+`dura` on `Control.Water` is optional, and the Meross app sends it on every "water now". So
+the timer supports a per-cycle duration natively, and a third feature exposes it: **Next
+watering duration**, in minutes, resting at 0.
+
+The rules that keep it from becoming the 900 all over again:
+
+- it is **never** written to `Config.DeviceCfg` — the owner's app setting is not ours to touch;
+- **0 sends nothing at all.** Not "send the configured value": reading the default and echoing
+  it back would put Gladys in the position of asserting a possibly-stale number again, and it
+  would fail on a timer whose configuration has never been read. Silence lets the hardware
+  answer;
+- it is **spent by the start it rides on**, and only once the hub has accepted the command —
+  clearing it on a failure would make the user re-enter it for the retry;
+- it lives in memory only. It is consumed by the next watering, so it has nothing to survive:
+  persisting it would mean a duration entered weeks ago silently applying today. Every poll
+  re-publishes it, which is what keeps a value left on the dashboard by a previous process
+  from outliving it.
+
+`Last watering duration` publishes `Control.Water` → `dura` as a read-only receipt. With the
+input clearing itself the moment a watering starts, it is the only place left that says which
+duration was actually used — and, since the configured default is now read from
+`Config.DeviceCfg` alone, comparing the two is what would reveal a one-off `dura` leaking into
+the device's configuration.
 
 The switch is also cleared by a local timer when the duration elapses. That is not the
 authority — the next poll is — it just spares the user a switch left visibly on for up to a

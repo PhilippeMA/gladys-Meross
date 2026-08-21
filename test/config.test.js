@@ -10,6 +10,8 @@ import {
   isConfigured,
   normalizeConfig,
   normalizePollFrequency,
+  normalizeRunDuration,
+  normalizeWateringDuration,
   POLL_FREQUENCIES,
   REGIONS,
 } from '../src/config.js';
@@ -95,4 +97,27 @@ test('isConfigured requires both an email and a password', () => {
   assert.equal(isConfigured(normalizeConfig({ email: 'a@b.c' })), false);
   assert.equal(isConfigured(normalizeConfig({ password: 'p' })), false);
   assert.equal(isConfigured(normalizeConfig({ email: 'a@b.c', password: 'p' })), true);
+});
+
+// --- Watering durations ------------------------------------------------------
+// Two durations with two different floors, and the difference is the feature:
+// the configured default must be a real watering, the one-off may be "nothing".
+
+test('the configured default never falls below a minute', () => {
+  assert.equal(normalizeWateringDuration(0), 1, 'dura: 0 is not a watering');
+  assert.equal(normalizeWateringDuration(-5), 1);
+  assert.equal(normalizeWateringDuration(10), 10);
+  assert.equal(normalizeWateringDuration(99999), 1440);
+  assert.equal(normalizeWateringDuration('nope'), null, 'unreadable, so nothing claimed');
+});
+
+test('the one-off duration keeps zero, because zero is how it rests', () => {
+  // 0 means "send no duration and let the timer use its own". Clamping it up to
+  // one minute would turn a cleared field into a one-minute watering.
+  assert.equal(normalizeRunDuration(0), 0);
+  assert.equal(normalizeRunDuration(-5), 0, 'nonsense resolves to the resting state');
+  assert.equal(normalizeRunDuration(5), 5);
+  assert.equal(normalizeRunDuration(4.6), 5, 'the dashboard can hand us a float');
+  assert.equal(normalizeRunDuration(99999), 1440);
+  assert.equal(normalizeRunDuration('nope'), null);
 });
