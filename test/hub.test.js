@@ -3,7 +3,7 @@
 // and coalescing the burst of polls its sub-devices trigger.
 // -----------------------------------------------------------------------------
 
-import { test } from 'node:test';
+import { mock, test } from 'node:test';
 import assert from 'node:assert/strict';
 import { isHub, MerossClient, mergeHubPayload, mergeSubIdPayload } from '../src/meross/client.js';
 import { buildMessage, HUB_PAYLOAD_KEYS, NAMESPACE } from '../src/meross/protocol.js';
@@ -354,10 +354,11 @@ test('a watering goes through the normal channel, cloud included', async () => {
 });
 
 test('starting a watering carries no duration of its own', async () => {
-  // The app's captured request has a `dura`, and reproducing it OVERRIDES the
-  // duration configured on the timer for that cycle. That is how this
-  // integration came to overwrite its owner's setting with an invented default.
-  // Left out, the timer waters for as long as it is configured to.
+  // With nothing queued — the resting state — Gladys says nothing about the
+  // duration and the timer waters for as long as it is configured to. Inventing
+  // a number here is how this integration once overwrote its owner's setting,
+  // and reading the configured value back to echo it would be the same mistake
+  // wearing a disguise.
   const device = wateringHub();
   const client = createCountingClient();
   const sent = [];
@@ -408,6 +409,232 @@ test('stopping a watering uses onoff 2 and omits the duration', async () => {
   });
   assert.ok(!('dura' in sent[0].control[0]), 'no duration when stopping');
   assert.equal(applied, 0);
+});
+
+// --- One-off duration for the next watering ----------------------------------
+
+/** Queue a one-off duration the way the dashboard does, and start a watering. */
+async function startWith(client, gladys, device, minutes) {
+  if (minutes !== null) {
+    await hub.onSetValue(client, {
+      gladys,
+      device,
+      subDeviceId: '1B0091AFC74E',
+      kind: 'watering-run-duration',
+      value: minutes,
+    });
+  }
+  return hub.onSetValue(client, {
+    gladys,
+    device,
+    subDeviceId: '1B0091AFC74E',
+    kind: 'watering',
+    value: 1,
+  });
+}
+
+function recordingClient(sent) {
+  const client = createCountingClient();
+  client.request = async (uuid, namespace, method, payload) => {
+    sent.push({ namespace, method, payload });
+    return {};
+  };
+  return client;
+}
+
+test('queueing a one-off duration sends nothing to the device', async () => {
+  // The entire promise of this feature. The timer's configured default belongs
+  // to its owner and to the Meross app; a duration meant for one watering must
+  // never reach `Appliance.Config.DeviceCfg`.
+  const device = wateringHub();
+  device.ability['Appliance.Config.DeviceCfg'] = {};
+  const sent = [];
+  const client = recordingClient(sent);
+
+  const applied = await hub.onSetValue(client, {
+    gladys: createFakeGladys(),
+    device,
+    subDeviceId: '1B0091AFC74E',
+    kind: 'watering-run-duration',
+    value: 7,
+  });
+
+  assert.equal(applied, 7);
+  assert.deepEqual(sent, [], 'not one message left the process');
+});
+
+test('a queued duration rides along with the watering it was meant for', async () => {
+  const device = wateringHub();
+  const sent = [];
+  const client = recordingClient(sent);
+
+  await startWith(client, createFakeGladys(), device, 5);
+
+  assert.deepEqual(sent, [
+    {
+      namespace: 'Appliance.Control.Water',
+      method: 'SET',
+      // Seconds, next to onoff — the shape the Meross app itself sends.
+      payload: { control: [{ channel: 0, dura: 300, onoff: 1, subId: '1B0091AFC74E' }] },
+    },
+  ]);
+});
+
+test('the queued duration is spent by the watering it starts', async () => {
+  const device = wateringHub();
+  const gladys = createFakeGladys();
+  const sent = [];
+  const client = recordingClient(sent);
+
+  await startWith(client, gladys, device, 5);
+
+  const cleared = gladys.published.filter((p) =>
+    p.featureExternalId.endsWith(':watering-run-duration-0'),
+  );
+  assert.deepEqual(cleared, [
+    {
+      featureExternalId: `meross:${device.uuid}-1B0091AFC74E:watering-run-duration-0`,
+      state: 0,
+    },
+  ]);
+
+  // And the next watering falls back to the timer's own duration rather than
+  // silently reusing a number the user believes is spent.
+  await startWith(client, gladys, device, null);
+  assert.deepEqual(sent[1].payload, {
+    control: [{ channel: 0, onoff: 1, subId: '1B0091AFC74E' }],
+  });
+});
+
+test('a watering the hub refuses keeps the duration for the retry', async () => {
+  // Clearing on the way out would make the user re-enter the duration after a
+  // failure they did not cause.
+  const device = wateringHub();
+  const gladys = createFakeGladys();
+  const sent = [];
+  const client = createCountingClient();
+  let refuse = true;
+  client.request = async (uuid, namespace, method, payload) => {
+    if (refuse) {
+      throw new Error('hub said no');
+    }
+    sent.push(payload);
+    return {};
+  };
+
+  await assert.rejects(() => startWith(client, gladys, device, 5), /hub said no/);
+  assert.deepEqual(
+    gladys.published.filter((p) => p.featureExternalId.endsWith(':watering-run-duration-0')),
+    [],
+    'nothing was spent',
+  );
+
+  refuse = false;
+  await startWith(client, gladys, device, null);
+  assert.equal(sent[0].control[0].dura, 300, 'the queued duration survived the failure');
+});
+
+test('stopping a watering neither carries nor spends the queued duration', async () => {
+  const device = wateringHub();
+  const gladys = createFakeGladys();
+  const sent = [];
+  const client = recordingClient(sent);
+
+  await hub.onSetValue(client, {
+    gladys,
+    device,
+    subDeviceId: '1B0091AFC74E',
+    kind: 'watering-run-duration',
+    value: 5,
+  });
+  await hub.onSetValue(client, {
+    gladys,
+    device,
+    subDeviceId: '1B0091AFC74E',
+    kind: 'watering',
+    value: 0,
+  });
+
+  assert.ok(!('dura' in sent[0].payload.control[0]), 'a stop has no duration to carry');
+  assert.deepEqual(
+    gladys.published.filter((p) => p.featureExternalId.endsWith(':watering-run-duration-0')),
+    [],
+    'a stop spends nothing',
+  );
+});
+
+test('the queued duration is re-asserted on every poll', async () => {
+  // The value lives in memory, so a number left on the dashboard by a previous
+  // process would otherwise stay on screen while this one treats it as spent.
+  const device = wateringHub();
+  const gladys = createFakeGladys();
+  const sub = device.subDevices.get('1B0091AFC74E');
+
+  await publishDeviceStates(gladys, device);
+  assert.ok(
+    gladys.published.some(
+      (p) => p.featureExternalId.endsWith(':watering-run-duration-0') && p.state === 0,
+    ),
+    'a fresh process publishes the resting state',
+  );
+
+  await hub.onSetValue(createCountingClient(), {
+    gladys,
+    device,
+    subDeviceId: '1B0091AFC74E',
+    kind: 'watering-run-duration',
+    value: 12,
+  });
+  assert.equal(
+    hub.buildSubDeviceStates(sub).find((s) => s.featureKey.startsWith('watering-run')).state,
+    12,
+  );
+});
+
+test('the last cycle is published as a receipt, in minutes', async () => {
+  // With the input field clearing itself the moment a watering starts, this is
+  // the only place left that says which duration was actually used.
+  const device = wateringHub();
+  const gladys = createFakeGladys();
+
+  mergeSubIdPayload(device, NAMESPACE.CONTROL_WATER, {
+    control: [{ subId: '1B0091AFC74E', onoff: 2, dura: 300 }],
+  });
+  await publishDeviceStates(gladys, device);
+
+  const receipt = gladys.published.find((p) =>
+    p.featureExternalId.endsWith(':watering-last-duration-0'),
+  );
+  assert.equal(receipt.state, 5);
+});
+
+test('the switch clears itself after the duration this cycle really got', async () => {
+  // The countdown used to follow the configured default. Left alone, a 5-minute
+  // override would leave the switch on for the full configured hour.
+  const device = wateringHub();
+  const gladys = createFakeGladys();
+  mergeSubIdPayload(device, NAMESPACE.CONFIG_DEVICECFG, {
+    config: [{ subId: '1B0091AFC74E', channel: 0, mstCfg: { dura: 3600 } }],
+  });
+
+  mock.timers.enable({ apis: ['setTimeout'] });
+  try {
+    await startWith(recordingClient([]), gladys, device, 5);
+
+    mock.timers.tick(5 * 60 * 1000 - 1);
+    const clearedEarly = gladys.published.filter(
+      (p) => p.featureExternalId.endsWith(':watering-0') && p.state === 0,
+    );
+    assert.deepEqual(clearedEarly, [], 'still watering one millisecond before the end');
+
+    mock.timers.tick(1);
+    assert.ok(
+      gladys.published.some((p) => p.featureExternalId.endsWith(':watering-0') && p.state === 0),
+      'the switch clears at the override, not at the configured hour',
+    );
+  } finally {
+    mock.timers.reset();
+  }
 });
 
 test('setting the duration writes it to the timer, not to a local variable', async () => {
@@ -653,13 +880,15 @@ test('the duration is read from the device, never invented', async () => {
 
   assert.equal(hub.wateringDuration(sub), null, 'nothing read yet, so nothing claimed');
 
-  // Only a past cycle known: better than nothing, and honest about its origin.
+  // A past cycle is NOT evidence of the configured default — not since a
+  // watering can be started with a one-off duration. Falling back to it would
+  // show a 5-minute override as the user's app setting.
   mergeSubIdPayload(device, NAMESPACE.CONTROL_WATER, {
-    control: [{ subId: '1B0091AFC74E', onoff: 2, dura: 900 }],
+    control: [{ subId: '1B0091AFC74E', onoff: 2, dura: 300 }],
   });
-  assert.equal(hub.wateringDuration(sub), 15);
+  assert.equal(hub.wateringDuration(sub), null, 'the last cycle says nothing about the default');
 
-  // The configured value wins as soon as the device reports it.
+  // The configured value is the only source.
   mergeSubIdPayload(device, NAMESPACE.CONFIG_DEVICECFG, {
     config: [{ subId: '1B0091AFC74E', channel: 0, mstCfg: { dura: 1200 } }],
   });

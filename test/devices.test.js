@@ -543,11 +543,17 @@ test('a watering timer exposes no on/off switch at all', () => {
 
   assert.deepEqual(
     timer.features.map((f) => f.name),
-    ['Watering', 'Watering duration', 'Battery'],
+    [
+      'Watering',
+      'Default watering duration',
+      'Next watering duration (0 = default)',
+      'Last watering duration',
+      'Battery',
+    ],
   );
   assert.equal(feature(timer, 'battery-0').read_only, true);
 
-  // The watering duration is settable, in minutes.
+  // The configured default is settable, in minutes.
   const duration = feature(timer, 'watering-duration-0');
   assert.equal(duration.unit, 'minutes');
   assert.equal(duration.read_only, false);
@@ -555,6 +561,28 @@ test('a watering timer exposes no on/off switch at all', () => {
   // A day, matching what meross_lan allows. Clamping tighter would misreport a
   // duration the device really holds — and this value is read from the device.
   assert.equal(duration.max, 1440);
+});
+
+test('the one-off duration starts spent and accepts zero', () => {
+  const gladys = createFakeGladys();
+  const device = smartHub({ subDevices: new Map([['1B0091AFC74E', wateringTimer()]]) });
+
+  const [timer] = buildDiscoveredDevices(gladys, [device], config);
+  const next = feature(timer, 'watering-run-duration-0');
+
+  // 0 is the resting state, so it has to be inside the accepted range — and it
+  // is the value a brand-new device starts at, which is what makes the feature
+  // invisible until someone uses it.
+  assert.equal(next.min, 0);
+  assert.equal(next.max, 1440);
+  assert.equal(next.last_value, 0);
+  assert.equal(next.read_only, false);
+  assert.equal(next.unit, 'minutes');
+  // It alternates between a duration and 0 by design; that is not history.
+  assert.equal(next.keep_history, false);
+
+  // The receipt, on the other hand, is never written by the user.
+  assert.equal(feature(timer, 'watering-last-duration-0').read_only, true);
 });
 
 test('a thermostatic valve keeps its On/Off switch', () => {

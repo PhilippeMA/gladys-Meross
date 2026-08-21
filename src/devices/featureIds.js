@@ -35,7 +35,12 @@ export const FEATURE_KIND = {
   LEAK: 'leak',
   OPENING: 'opening',
   WATERING: 'watering',
+  // Three durations, three sources, one owner each: the default configured on
+  // the timer, the one-off Gladys uses for the next watering it starts, and
+  // what the last cycle actually ran for.
   WATERING_DURATION: 'watering-duration',
+  WATERING_RUN_DURATION: 'watering-run-duration',
+  WATERING_LAST_DURATION: 'watering-last-duration',
 };
 
 /**

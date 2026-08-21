@@ -34,8 +34,6 @@ export const DEFAULT_CONFIG = {
   // Milliseconds. Only used by the devices that cannot push: power monitoring
   // and hub sub-devices.
   poll_frequency: DEFAULT_POLL_FREQUENCY,
-  // Minutes. How long a manual watering runs when started from Gladys; each
-  // timer can be given its own value from its "Watering duration" feature.
   // Reserved key (NOT in config_schema): the manifest declares both 'local' and
   // 'cloud' in `transports`, so Gladys shows a "Prefer the local connection"
   // toggle and sends the choice here. Read-only for the integration.
@@ -106,6 +104,22 @@ export function normalizeWateringDuration(value) {
     return null;
   }
   return Math.max(WATERING_DURATION_MIN, Math.min(WATERING_DURATION_MAX, minutes));
+}
+
+/**
+ * Clamp the one-off duration used for the NEXT watering started from Gladys.
+ *
+ * Zero is a legitimate value here, and is the resting state of the feature: it
+ * means "say nothing, let the timer use its configured default". That is why
+ * this does not reuse `normalizeWateringDuration`, whose floor is one minute
+ * because it writes a duration the device has to run for.
+ */
+export function normalizeRunDuration(value) {
+  const minutes = Math.round(Number(value));
+  if (!Number.isFinite(minutes)) {
+    return null;
+  }
+  return Math.max(0, Math.min(WATERING_DURATION_MAX, minutes));
 }
 
 /** Accepted regions, matching the manifest select options. */

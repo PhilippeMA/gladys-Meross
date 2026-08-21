@@ -41,20 +41,47 @@ température de consigne, qui est l'essentiel pour les automatisations.
 
 #### Programmateurs d'arrosage
 
-Un programmateur MST100 sur un hub MSH400 vous donne un interrupteur **« Watering »**, une
-durée **« Watering duration »** en minutes et son **niveau de batterie**.
+Un programmateur MST100 sur un hub MSH400 vous donne un interrupteur **« Watering »**, trois
+durées en minutes et son **niveau de batterie**.
 
-Activez **Watering** et le programmateur arrose pendant la durée réglée, puis s'arrête tout
-seul — exactement comme le bouton « arroser maintenant » de l'application Meross. Désactivez-le
-pour arrêter avant la fin. L'interrupteur se remet à zéro quand l'arrosage se termine.
+Activez **Watering** et le programmateur arrose, puis s'arrête tout seul — exactement comme le
+bouton « arroser maintenant » de l'application Meross. Désactivez-le pour arrêter avant la
+fin. L'interrupteur se remet à zéro quand l'arrosage se termine.
 
-La durée affichée est **celle réglée sur le programmateur lui-même** — la même que dans
-l'application Meross. La modifier depuis Gladys l'écrit sur l'appareil, donc l'application
-verra le changement, et inversement. Il n'y a qu'une seule valeur et elle appartient au
-matériel : Gladys ne lance jamais un arrosage avec une durée de son cru.
+##### Les trois durées
 
-Tant que le programmateur n'a rien communiqué, la durée reste vide plutôt qu'affichée avec
-une valeur inventée.
+| Fonctionnalité                           | Ce qu'elle représente                                   |
+| ---------------------------------------- | ------------------------------------------------------- |
+| **Default watering duration**            | Le réglage de l'appareil, celui de l'application Meross |
+| **Next watering duration (0 = default)** | La durée du prochain arrosage lancé depuis Gladys       |
+| **Last watering duration**               | Ce que le dernier arrosage a réellement duré            |
+
+**Default watering duration** est **la valeur réglée sur le programmateur lui-même** — la même
+que dans l'application Meross. La modifier depuis Gladys l'écrit sur l'appareil, donc
+l'application verra le changement, et inversement. Il n'y a qu'une seule valeur et elle
+appartient au matériel. Tant que le programmateur n'a rien communiqué, elle reste vide plutôt
+qu'affichée avec une valeur inventée.
+
+**Next watering duration** est une durée exceptionnelle, pour un seul arrosage. Elle
+**n'est jamais écrite sur l'appareil** : votre réglage de l'application Meross reste intact.
+
+- À **0** — sa valeur au repos — Gladys ne dit rien sur la durée et le programmateur applique
+  la sienne. C'est le comportement par défaut, exactement comme avant.
+- À une autre valeur, le prochain arrosage lancé depuis Gladys durera ce temps-là.
+
+Elle **revient à 0 dès que l'arrosage démarre** : elle est consommée. Le champ se vide sous
+vos yeux, et c'est **Last watering duration** qui vous indique la durée réellement appliquée.
+Si le hub refuse la commande, la valeur est conservée — vous n'avez pas à la resaisir.
+
+Dans une scène, réglez **Next watering duration** puis allumez **Watering** : les deux actions
+s'enchaînent dans l'ordre.
+
+Un arrosage lancé depuis l'application Meross ou par la programmation du hub utilise la durée
+par défaut et ne consomme pas votre valeur.
+
+Cette durée n'est pas conservée si l'intégration redémarre : au démarrage elle est à 0, donc
+un arrosage lancé après un redémarrage utilise la durée par défaut. C'est délibéré — une durée
+saisie il y a des semaines ne doit pas s'appliquer en silence à l'arrosage d'aujourd'hui.
 
 Gladys parle à votre hub en direct sur votre réseau local quand il est joignable, et via les
 serveurs Meross sinon. Si l'arrosage échoue, le message d'erreur nomme les deux canaux et

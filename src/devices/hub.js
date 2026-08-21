@@ -33,12 +33,14 @@ import {
   METHOD,
   NAMESPACE,
   readConfiguredDuration,
+  readLastCycleDuration,
   toDeciUnit,
   WATER_ONOFF,
 } from '../meross/protocol.js';
 import { TIMEOUT_ERROR_CODE } from '../meross/mqttClient.js';
 import {
   normalizePollFrequency,
+  normalizeRunDuration,
   normalizeWateringDuration,
   WATERING_DURATION_MAX,
   WATERING_DURATION_MIN,
@@ -235,7 +237,9 @@ export function buildSubDeviceFeatures(sub, ids) {
         keep_history: true,
       },
       {
-        name: 'Watering duration',
+        // The default configured on the timer itself: writing it here writes it
+        // in the Meross app too, because it is the same single field.
+        name: 'Default watering duration',
         external_id: ids.feature(buildFeatureKey(FEATURE_KIND.WATERING_DURATION, 0)),
         category: DEVICE_FEATURE_CATEGORIES.DURATION,
         type: DEVICE_FEATURE_TYPES.DURATION.INTEGER,
@@ -243,6 +247,42 @@ export function buildSubDeviceFeatures(sub, ids) {
         min: WATERING_DURATION_MIN,
         max: WATERING_DURATION_MAX,
         read_only: false,
+        has_feedback: false,
+        keep_history: false,
+      },
+      {
+        // A Gladys-side value that never reaches the timer's configuration: it
+        // is spent on the next watering Gladys starts, then falls back to 0.
+        // The rule is in the name because a Gladys feature has nowhere else to
+        // put it — there is no description field on a feature.
+        name: 'Next watering duration (0 = default)',
+        external_id: ids.feature(buildFeatureKey(FEATURE_KIND.WATERING_RUN_DURATION, 0)),
+        category: DEVICE_FEATURE_CATEGORIES.DURATION,
+        type: DEVICE_FEATURE_TYPES.DURATION.INTEGER,
+        unit: DEVICE_FEATURE_UNITS.MINUTES,
+        // Zero is the resting state, not a rejected value.
+        min: 0,
+        max: WATERING_DURATION_MAX,
+        // Starts spent, so a fresh install behaves exactly as it did before this
+        // feature existed.
+        last_value: 0,
+        read_only: false,
+        has_feedback: false,
+        // It alternates between a duration and 0 by design; that is not history.
+        keep_history: false,
+      },
+      {
+        // What the timer actually ran for, whoever started it. With the input
+        // field clearing itself the moment a watering starts, this is the only
+        // place left that says which duration was used.
+        name: 'Last watering duration',
+        external_id: ids.feature(buildFeatureKey(FEATURE_KIND.WATERING_LAST_DURATION, 0)),
+        category: DEVICE_FEATURE_CATEGORIES.DURATION,
+        type: DEVICE_FEATURE_TYPES.DURATION.INTEGER,
+        unit: DEVICE_FEATURE_UNITS.MINUTES,
+        min: 0,
+        max: WATERING_DURATION_MAX,
+        read_only: true,
         has_feedback: false,
         keep_history: false,
       },
@@ -387,6 +427,23 @@ export function buildSubDeviceStates(sub) {
       });
     }
 
+    // Re-assert the pending one-off duration on every poll. This is what keeps
+    // Gladys and the integration agreeing after a restart: the value lives in
+    // memory here, so a number left in the dashboard by the previous process
+    // would otherwise stay on screen while this one already treats it as spent.
+    states.push({
+      featureKey: buildFeatureKey(FEATURE_KIND.WATERING_RUN_DURATION, 0),
+      state: pendingRunDuration(sub),
+    });
+
+    const lastCycle = readLastCycleDuration(state);
+    if (lastCycle !== null) {
+      states.push({
+        featureKey: buildFeatureKey(FEATURE_KIND.WATERING_LAST_DURATION, 0),
+        state: Math.round(lastCycle / 60),
+      });
+    }
+
     // `Appliance.Control.Water` carries the real cycle state, both on poll and
     // on push: `onoff` is 1 while watering and 2 once stopped. Publishing that
     // rather than the value we commanded is what catches a watering started
@@ -423,20 +480,60 @@ export async function onSetValue(client, { gladys, device, subDeviceId, kind, va
       const sub = device.subDevices?.get(subDeviceId);
       const start = Number(value) === 1;
 
+      // A pending one-off duration applies to this cycle only. Zero — the
+      // resting state — sends nothing at all, and the timer runs for the
+      // duration it is configured with.
+      const overrideMinutes = start ? pendingRunDuration(sub) : 0;
+      const configured = readConfiguredDuration(sub?.state);
+
       requireAbility(device, NAMESPACE.CONTROL_WATER, subDeviceId);
       await sendWateringCommand(
         client,
         device,
-        // Deliberately no duration: the timer runs for the length it is
-        // configured with, which is the one the Meross app shows.
-        buildWaterControlPayload({ subId: subDeviceId, start }),
-        `configured duration: ${readConfiguredDuration(sub?.state) ?? 'unknown'} s, ` +
+        buildWaterControlPayload({
+          subId: subDeviceId,
+          start,
+          durationSeconds: overrideMinutes * 60,
+        }),
+        `${overrideMinutes > 0 ? `one-off duration: ${overrideMinutes} min` : 'no duration sent'}, ` +
+          `configured duration: ${configured ?? 'unknown'} s, ` +
           `last cycle: ${JSON.stringify(sub?.state?.control ?? {})}`,
       );
 
-      const seconds = readConfiguredDuration(sub?.state);
+      // Only now that the hub has accepted it. Clearing on the way out would
+      // make the user re-enter the duration after a failure they did not cause.
+      if (overrideMinutes > 0) {
+        await clearRunDuration(gladys, device, subDeviceId);
+      }
+
+      // The switch clears itself when the water stops, so the countdown has to
+      // be the duration this cycle actually got — the override when there was
+      // one, the timer's own default otherwise.
+      const seconds = overrideMinutes > 0 ? overrideMinutes * 60 : configured;
       scheduleWateringStop(gladys, device, subDeviceId, start ? seconds : 0);
       return start ? 1 : 0;
+    }
+
+    case FEATURE_KIND.WATERING_RUN_DURATION: {
+      const minutes = normalizeRunDuration(value);
+      if (minutes === null) {
+        throw new Error(`Invalid next-watering duration for ${subDeviceId}: ${value}`);
+      }
+
+      // Deliberately NOT written to the device. This is the whole point of the
+      // feature: the timer's configured default belongs to its owner and to the
+      // Meross app, and a one-off duration must never touch it.
+      const sub = device.subDevices?.get(subDeviceId);
+      if (sub) {
+        sub.runDurationMinutes = minutes;
+      }
+
+      logger.info(
+        minutes > 0
+          ? `Next watering on ${subDeviceId} will run for ${minutes} min`
+          : `Next watering on ${subDeviceId} will use the timer's configured duration`,
+      );
+      return minutes;
     }
 
     case FEATURE_KIND.WATERING_DURATION: {
@@ -569,6 +666,41 @@ const SETTLE_DELAY_MS = 600;
 export function wateringDuration(sub) {
   const seconds = readConfiguredDuration(sub?.state);
   return seconds === null ? null : normalizeWateringDuration(seconds / 60);
+}
+
+/**
+ * The one-off duration waiting to be spent on the next watering, in minutes.
+ *
+ * Held in memory on purpose. It is consumed by the very next start, so it has
+ * nothing to survive: persisting it would mean a duration entered weeks ago
+ * silently applying to a watering started today.
+ */
+function pendingRunDuration(sub) {
+  const minutes = Number(sub?.runDurationMinutes);
+  return Number.isFinite(minutes) && minutes > 0 ? minutes : 0;
+}
+
+/**
+ * Spend the one-off duration: forget it, and tell Gladys so the field empties
+ * itself instead of quietly applying again to the next watering.
+ */
+async function clearRunDuration(gladys, device, subDeviceId) {
+  const sub = device.subDevices?.get(subDeviceId);
+  if (sub) {
+    sub.runDurationMinutes = 0;
+  }
+
+  const externalId = deviceIds(gladys, subDevicePlatformId(device.uuid, subDeviceId)).feature(
+    buildFeatureKey(FEATURE_KIND.WATERING_RUN_DURATION, 0),
+  );
+
+  try {
+    await gladys.publishState(externalId, 0);
+  } catch (err) {
+    // The watering is already running: failing the command now would tell the
+    // user the opposite of what happened. The next poll republishes it anyway.
+    logger.warn(`Could not clear the next-watering duration of ${subDeviceId}`, err);
+  }
 }
 
 /**
