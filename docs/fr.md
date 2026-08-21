@@ -69,6 +69,11 @@ qu'affichée avec une valeur inventée.
   la sienne. C'est le comportement par défaut, exactement comme avant.
 - À une autre valeur, le prochain arrosage lancé depuis Gladys durera ce temps-là.
 
+Elle se règle avec un curseur, de **0 à 120 minutes**. Ce plafond est plus bas que celui de la
+durée par défaut, et volontairement : Gladys affiche une durée modifiable sous forme de
+curseur, donc plus la plage est large, moins le réglage est précis. Pour un arrosage plus long,
+c'est la **durée par défaut** qu'il faut régler — elle va jusqu'à 24 h.
+
 Elle **revient à 0 dès que l'arrosage démarre** : elle est consommée. Le champ se vide sous
 vos yeux, et c'est **Last watering duration** qui vous indique la durée réellement appliquée.
 Si le hub refuse la commande, la valeur est conservée — vous n'avez pas à la resaisir.

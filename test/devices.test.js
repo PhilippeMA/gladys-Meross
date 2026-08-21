@@ -574,7 +574,7 @@ test('the one-off duration starts spent and accepts zero', () => {
   // is the value a brand-new device starts at, which is what makes the feature
   // invisible until someone uses it.
   assert.equal(next.min, 0);
-  assert.equal(next.max, 1440);
+  assert.equal(next.max, 120);
   assert.equal(next.last_value, 0);
   assert.equal(next.read_only, false);
   assert.equal(next.unit, 'minutes');
@@ -583,6 +583,29 @@ test('the one-off duration starts spent and accepts zero', () => {
 
   // The receipt, on the other hand, is never written by the user.
   assert.equal(feature(timer, 'watering-last-duration-0').read_only, true);
+});
+
+test('an editable duration is declared decimal, or the dashboard shows it read-only', () => {
+  // `read_only: false` is not enough. Gladys routes a feature to a control by
+  // TYPE: `duration`/`decimal` has one, `duration`/`integer` has none, and a
+  // feature with no control falls back to the read-only sensor row. Declared as
+  // an integer, both of these accept commands from a scene while offering the
+  // user no way to send one — which reads as a bug in this integration.
+  const gladys = createFakeGladys();
+  const device = smartHub({ subDevices: new Map([['1B0091AFC74E', wateringTimer()]]) });
+
+  const [timer] = buildDiscoveredDevices(gladys, [device], config);
+
+  for (const key of ['watering-duration-0', 'watering-run-duration-0']) {
+    const editable = feature(timer, key);
+    assert.equal(editable.read_only, false, key);
+    assert.equal(editable.category, 'duration', key);
+    assert.equal(editable.type, 'decimal', key);
+  }
+
+  // A read-only duration renders as a sensor whatever its type, so it is free
+  // to stay an integer — which is what it is.
+  assert.equal(feature(timer, 'watering-last-duration-0').type, 'integer');
 });
 
 test('a thermostatic valve keeps its On/Off switch', () => {

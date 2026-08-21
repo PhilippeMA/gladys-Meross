@@ -118,6 +118,8 @@ test('the one-off duration keeps zero, because zero is how it rests', () => {
   assert.equal(normalizeRunDuration(-5), 0, 'nonsense resolves to the resting state');
   assert.equal(normalizeRunDuration(5), 5);
   assert.equal(normalizeRunDuration(4.6), 5, 'the dashboard can hand us a float');
-  assert.equal(normalizeRunDuration(99999), 1440);
+  // Capped lower than the configured default: the dashboard renders this one as
+  // a slider with a step of 1, so the range IS the precision.
+  assert.equal(normalizeRunDuration(99999), 120);
   assert.equal(normalizeRunDuration('nope'), null);
 });

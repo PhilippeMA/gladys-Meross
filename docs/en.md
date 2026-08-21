@@ -66,6 +66,11 @@ device**: your Meross app setting is left untouched.
   own. That is the default behaviour, exactly as before.
 - At anything else, the next watering started from Gladys runs for that long.
 
+You set it with a slider, from **0 to 120 minutes**. That ceiling is lower than the default
+duration's on purpose: Gladys renders an editable duration as a slider, so the wider the range,
+the coarser the setting. For a longer watering, set the **default duration** instead — that one
+goes up to 24 hours.
+
 It **returns to 0 as soon as the watering starts**: it is spent. The field empties itself, and
 **Last watering duration** is what tells you the duration actually used. If the hub refuses
 the command, the value is kept — you do not have to type it again.
