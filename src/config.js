@@ -91,6 +91,21 @@ export const WATERING_DURATION_MIN = 1;
 export const WATERING_DURATION_MAX = 1440;
 
 /**
+ * Ceiling of the one-off duration, in minutes.
+ *
+ * Lower than the configured default's on purpose, and for a reason that is
+ * about the dashboard rather than the hardware: Gladys renders an editable
+ * duration as a RANGE SLIDER with a hard-coded step of 1, so the range is the
+ * precision. Over 0-1440 the user cannot land on ten minutes; over 0-120 they
+ * can, and two hours is far beyond any watering someone starts by hand.
+ *
+ * Nothing is lost: a longer watering is what the timer's configured duration is
+ * for, and that one still goes up to a day because it must report whatever the
+ * device really holds.
+ */
+export const RUN_DURATION_MAX = 120;
+
+/**
  * Clamp a watering duration into something a timer will accept. A zero or
  * negative duration would be written as `dura: 0`, which is not a watering.
  *
@@ -119,7 +134,7 @@ export function normalizeRunDuration(value) {
   if (!Number.isFinite(minutes)) {
     return null;
   }
-  return Math.max(0, Math.min(WATERING_DURATION_MAX, minutes));
+  return Math.max(0, Math.min(RUN_DURATION_MAX, minutes));
 }
 
 /** Accepted regions, matching the manifest select options. */

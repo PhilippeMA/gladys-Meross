@@ -148,6 +148,30 @@ The rules that keep it from becoming the 900 all over again:
   re-publishes it, which is what keeps a value left on the dashboard by a previous process
   from outliving it.
 
+##### `read_only: false` is not what makes a feature editable
+
+A feature declared writable is still shown read-only unless its **type** has a control wired
+up in the Gladys front-end. `DeviceRow` routes a feature to a component by type, and falls
+back to the read-only sensor row when it finds none — `read_only` never enters into it.
+
+`duration` accepts two types, and only one of them is routed:
+
+| Type                 | Dashboard                                     |
+| -------------------- | --------------------------------------------- |
+| `duration`/`decimal` | `MultiLevelDeviceFeature`, an editable slider |
+| `duration`/`integer` | nothing — falls back to a read-only sensor    |
+
+Both are legal server-side, so nothing rejects the integer version: the feature is created,
+accepts commands from a scene, and simply offers the user no way to send one. It looks like a
+bug in the integration, and it was reported as one. So every duration the user edits is
+declared `decimal`; a read-only duration may stay `integer`, since read-only renders as a
+sensor whatever its type.
+
+The slider's step is hard-coded to 1 in that component, which makes the range the precision:
+the one-off duration is therefore capped at 120 minutes so a user can actually land on ten,
+while the configured default keeps its 24-hour ceiling because it has to report whatever the
+device really holds.
+
 `Last watering duration` publishes `Control.Water` → `dura` as a read-only receipt. With the
 input clearing itself the moment a watering starts, it is the only place left that says which
 duration was actually used — and, since the configured default is now read from

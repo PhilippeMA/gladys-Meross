@@ -42,6 +42,7 @@ import {
   normalizePollFrequency,
   normalizeRunDuration,
   normalizeWateringDuration,
+  RUN_DURATION_MAX,
   WATERING_DURATION_MAX,
   WATERING_DURATION_MIN,
 } from '../config.js';
@@ -50,6 +51,22 @@ import { buildFeatureKey, deviceIds, FEATURE_KIND, subDevicePlatformId } from '.
 const logger = createLogger({ name: 'hub' });
 
 export const KIND = 'hub';
+
+/**
+ * Feature type of a duration the USER is meant to edit.
+ *
+ * `duration` accepts both `decimal` and `integer`, and the difference is
+ * invisible from here — but only `decimal` is wired to a control in the Gladys
+ * dashboard. `DeviceRow` looks the feature type up in its component map and,
+ * finding nothing for `duration`/`integer`, falls back to the read-only sensor
+ * row. `read_only: false` is then simply ignored: the feature accepts commands
+ * from a scene but offers no way to send one by hand, which looks exactly like
+ * a bug in this integration.
+ *
+ * So: any duration the user edits is DECIMAL. A read-only one may stay INTEGER,
+ * since a read-only feature renders as a sensor whatever its type.
+ */
+const WRITABLE_DURATION_TYPE = DEVICE_FEATURE_TYPES.DURATION.DECIMAL;
 
 /**
  * A hub keeps no useful state in its `Appliance.System.All` digest: everything
@@ -242,7 +259,8 @@ export function buildSubDeviceFeatures(sub, ids) {
         name: 'Default watering duration',
         external_id: ids.feature(buildFeatureKey(FEATURE_KIND.WATERING_DURATION, 0)),
         category: DEVICE_FEATURE_CATEGORIES.DURATION,
-        type: DEVICE_FEATURE_TYPES.DURATION.INTEGER,
+        // DECIMAL, not INTEGER — see WRITABLE_DURATION_TYPE below.
+        type: WRITABLE_DURATION_TYPE,
         unit: DEVICE_FEATURE_UNITS.MINUTES,
         min: WATERING_DURATION_MIN,
         max: WATERING_DURATION_MAX,
@@ -258,11 +276,12 @@ export function buildSubDeviceFeatures(sub, ids) {
         name: 'Next watering duration (0 = default)',
         external_id: ids.feature(buildFeatureKey(FEATURE_KIND.WATERING_RUN_DURATION, 0)),
         category: DEVICE_FEATURE_CATEGORIES.DURATION,
-        type: DEVICE_FEATURE_TYPES.DURATION.INTEGER,
+        type: WRITABLE_DURATION_TYPE,
         unit: DEVICE_FEATURE_UNITS.MINUTES,
         // Zero is the resting state, not a rejected value.
         min: 0,
-        max: WATERING_DURATION_MAX,
+        // The dashboard control is a slider, so the range is the precision.
+        max: RUN_DURATION_MAX,
         // Starts spent, so a fresh install behaves exactly as it did before this
         // feature existed.
         last_value: 0,
